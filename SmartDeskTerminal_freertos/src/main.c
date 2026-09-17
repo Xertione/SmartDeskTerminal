@@ -123,7 +123,7 @@ static void Error_Handler(void)
     while (1)
     {
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
-        for (volatile uint32_t i = 0; i < 1000000; i++)
+        for (volatile uint32_t i = 0; i < 100000; i++)
         {
         }
     }
