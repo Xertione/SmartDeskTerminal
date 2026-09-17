@@ -1,0 +1,520 @@
+
+<<<PAGE 1>>>
+深圳市鸿讯电子有限公司
+Shenzhen Hongxun Electronics Co., Ltd
+2.8 寸SPI 接口模块
+28005 数据手册
+版本：V1.1
+日期：2023-12-12
+鸿 讯 电 子
+
+<<<PAGE 2>>>
+2.8 寸SPI 接口模块28005 数据手册
+目录
+1 产品参数.........................................................................................................1
+2 PCB 结构图....................................................................................................2
+3 接口定义........................................................................................................3
+4 PCB 原理........................................................................................................ 4
+5 PCB 实物图....................................................................................................5
+6 版本记录........................................................................................................6
+鸿 讯 电 子
+
+<<<PAGE 3>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第1 页
+1
+产品参数
+名称
+描述
+备注
+面板尺寸
+2.8 inch
+面板类型
+TFT
+分辨率
+240xRGBx320
+显示模式
+Normally White/Normally Black
+备注1
+颜色数量
+65K/262K
+显示视角
+12：00’clock/全视角（IPS 高清）
+备注1
+面板驱动芯片
+ST7789V/ILI9341V
+备注1
+模块接口
+4-Line Serial interface
+电容触摸驱动芯片
+FT6336U
+电阻触摸驱动芯片
+XPT2046
+工作电压
+3.3V
+SD 卡规格
+Micro-SD
+模块尺寸（无触摸面板）
+51.0x86.0x6.5 (mm)
+模块尺寸（带触摸面板）
+51.0x86.0x7.9 (mm)
+工作温度
+-20℃~70℃
+存储温度
+-30℃~80℃
+备注1:“/”后是显示屏的可选配置。
+鸿 讯 电 子
+
+<<<PAGE 4>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第2 页
+2
+PCB 结构图
+2023.02.16
+PCB DRAWING
+28005
+SD卡接口
+鸿 讯 电 子
+
+<<<PAGE 5>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第3 页
+3
+接口定义
+序号
+符号
+功能描述
+1
+VCC
+电源输入（+3.3V）
+2
+GND
+电源地
+3
+CS
+片选信号，低电平使能
+4
+RESET
+复位信号，低电平复位
+5
+DC
+寄存器地址/数据选择脚
+DC=1：选择显示数据或寄存器参数
+DC=0: 选择寄存器地址
+6
+SDI(MOSI)
+串口数据输入
+7
+SCK
+时钟信号
+8
+LED
+背光控制信号，高电平点亮背光
+9
+SDO(MISO)
+串口数据输出
+电阻触摸屏定义
+10
+T_CLK
+电阻触摸屏SPI 总线时钟信号
+11
+T_CS
+电阻触摸屏片选信号
+12
+T_SDI
+电阻触摸屏SPI 总线输入信号
+13
+T_SDO
+电阻触摸屏SPI 总线输出信号
+14
+T_IRQ
+电阻触摸屏中断信号
+电容触摸屏定义
+10
+T_CLK/SCL
+电容触摸屏I2C 时钟信号
+11
+T_CS/RST
+电容触摸屏复位信号
+12
+T_SDI/SDA
+电容触摸屏I2C 数据信号
+13
+T_SDO
+空脚
+14
+T_IRQ/INT
+电容触摸屏中断信号
+注意：电阻触摸接口与电容触摸接口共用10～14 脚.
+鸿 讯 电 子
+
+<<<PAGE 6>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第4 页
+4
+PCB 原理
+液晶屏接口
+SPI_SDA = MOSI
+SPI_SDO = MISO
+14PIN排针接口
+背光控制电路
+深圳市鸿讯电子有限公司
+V1.0
+FIRST ISSUE
+2023.2.14
+默认关闭，LED引脚输入高电平打开背光
+PCB固定孔
+28005
+Modify the content：
+VER
+REV:
+SIZE:
+CODE:
+DRAWN:
+DATED:
+DATED:
+CHECKED:
+QUALITY CONTROL:
+DATED:
+DATED:
+RELEASED:
+COMPANY:
+TITLE:
+DRAWING NO:
+SHEET: OF
+SCALE:
+REVISION RECORD
+APPROVED:
+DATE:
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+J1
+VCC
+1
+X+
+2
+Y+
+3
+X-
+4
+Y-
+5
+GND
+6
+IN3
+7
+IN4
+8
+VREF
+9
+VCC
+10
+PEN
+11
+DOUT
+12
+BUSY
+13
+DIN
+14
+CS
+15
+CLK
+16
+U1
+XPT2046
+1
+K1
+KONG
+1
+K2
+KONG
+1
+K3
+KONG
+1
+K4
+KONG
+SPI_SDO
+SPI_SDO
+SPI_SDA
+SPI_SDA
+SPI_CS
+SPI_CS
+SPI_DC
+SPI_DC
+SPI_RESET
+SPI_RESET
+SPI_SCK
+SPI_SCK
+GND
+GND
+GND
+K
+K
+XL/X-
+XL/X-
+XR/X+
+XR/X+
+YU/Y-
+YU/Y-
+YD/Y+
+YD/Y+
+TP_CS
+TP_CS
+TP_SDI
+TP_SDI
+TP_SDO
+TP_SDO
+TP_IRQ
+TP_IRQ
+TP_SCK
+TP_SCK
+LED
+LED
+VCC
+VCC
+VCC
+VCC
+VCC
+GND
+Q1
+S8050(J3Y)
+SD卡座&排针接口
+DAT2
+1
+DAT3/CS
+2
+CMD/DI
+3
+VDD
+4
+CLK
+5
+GND
+6
+DAT0/DO
+7
+DAT/RES
+8
+PAD1
+9
+PAD2
+10
+PAD3
+11
+PAD4
+12
+SD1
+MICRO_SD
+1
+2
+3
+4
+J4
+CON4P
+SD_CS
+SD_CS
+VCC
+SD_MOSI
+SD_MOSI
+SD_SCL
+SD_SCL
+SD_MISO
+SD_MISO
+电容触摸接口
+VCC
+1
+SDA
+2
+SCL
+3
+INT
+4
+RST
+5
+GND
+6
+J3
+CON6P
+GND
+1
+RST
+2
+SCL
+3
+RS
+4
+CS
+5
+SDA
+6
+SDO
+7
+GND
+8
+VCC
+9
+LEDA
+10
+LEDK1
+11
+LEDK2
+12
+LEDK3
+13
+LEDK4
+14
+XL
+15
+YU
+16
+XR
+17
+YD
+18
+J2
+连接器
+SPI_SDO
+SPI_SDA
+SPI_CS
+SPI_DC
+SPI_RESET
+SPI_SCK
+GND
+K
+XL/X-
+XR/X+
+YU/Y-
+YD/Y+
+VCC
+VCC
+GND
+1
+RST
+2
+SCL
+3
+RS
+4
+CS
+5
+SDA
+6
+SDO
+7
+GND
+8
+VCC
+9
+LEDA
+10
+LEDK1
+11
+LEDK2
+12
+LEDK3
+13
+LEDK4
+14
+XL
+15
+YU
+16
+XR
+17
+YD
+18
+J5
+焊接
+VCC
+GND
+GND
+VCC
+TP_CS
+TP_SDI
+GND
+TP_IRQ
+TP_SCK
+VCC
+1K
+R1
+10K
+R2
+NC
+R3
+10K
+R4
+10K
+R5
+4R33
+R6
+10K
+R7
+10K
+R8
+10K
+R9
+10K
+R10
+100K
+R11
+1uF/10V
+C1
+0.1uF/25V
+C2
+0.1uF/25V
+C3
+电阻触摸电路
+注：当使用电容触摸或者显示屏不带触摸时，
+这块电路的元件可不用焊接。
+鸿 讯 电 子
+
+<<<PAGE 7>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第5 页
+5
+PCB 实物图
+正面图
+背面图
+鸿 讯 电 子
+
+<<<PAGE 8>>>
+2.8 寸SPI 接口模块28005 数据手册
+深圳市鸿讯电子有限公司
+版本：V1.1
+第6 页
+6
+版本记录
+版本
+修订记录
+日期
+V1.0
+原始版本
+2023-04-02
+V1.1
+更新接口定义第9 脚的描述
+2023-12-12
+鸿 讯 电 子
