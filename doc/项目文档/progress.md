@@ -1,46 +1,49 @@
 # 进度
 
-- 当前阶段：Phase 1 工程初始化与基础运行环境
-- 状态：进行中（**MCU 侧已全部验证正常**；仅剩"用户蓝灯不亮"这一硬件悬案）
+- 当前阶段：Phase 2 STM32 基础外设层建立
+- 状态：Phase 1 已收尾，准备进 Phase 2
 - 最后更新：2026-09-18
 
 ## 已完成
 
+### Phase 1：工程初始化与基础运行环境 ✅
 - [x] PlatformIO 工程骨架（`framework = stm32cube`，board = black_f407ve）
 - [x] 硬件齐备（F407VE 黑板 / ST-Link / ST7789 屏 / USB-C 线）
-- [x] 路线决策：PIO + stm32cube HAL，Phase 3 引入 FreeRTOS（见 [decision-log.md](decision-log.md) ADR-002）
-- [x] 文档骨架初始化（迁至 `doc/项目文档/`）
-- [x] LED 引脚查实：**PC0**，且**低电平点亮**（原理图 + 官方 `Drivers/User/Inc/led.h` 双验证）
-- [x] LED 闪烁代码（[main.c](../../SmartDeskTerminal_freertos/src/main.c)）+ 时钟决策（ADR-003 PLLQ=7 / ADR-004 HSE_VALUE 宏）
-- [x] 工作区根统一 repo（ADR-005）
-- [x] 首次烧录成功（日志有 `** Verified OK **`）
-- [x] **SWD 在线诊断：MCU 侧全部通过**（详证见 [troubleshooting.md](troubleshooting.md) T-005）
-  - HSE 8MHz 起振 + PLL 锁定；`SystemCoreClock = 168000000`（精确）
-  - `uwTick` 相隔 2000ms 涨 2003 / 2013 → SysTick 每 1ms 精准
-  - PC0 实测 **1Hz / 50% 占空比方波**；无 HardFault；PC 落在 `HAL_Delay` 中
-- [x] 屏幕接线资料核实：屏的 18-pin FPC **已由商家预先插好**在 28005 模块上；模块 14-pin 排针丝印与手册**逐脚一致**（见 `05_转接板_28005_SPI模块.md` 第 7 节）
+- [x] 路线决策：PIO + stm32cube HAL，Phase 3 引入 FreeRTOS（ADR-001/002）
+- [x] 文档骨架初始化（doc/项目文档/，6 文件 + plan.md）
+- [x] LED 引脚查实：PC0（用户 LED 蓝光），原理图 + 官方例程双验证
+- [x] 时钟决策：PLLQ=7（ADR-003）/ HSE_VALUE=8MHz 宏（ADR-004）
+- [x] 工作区根统一 repo（ADR-005）+ repo 精简方案 X（ADR-007，27 文件）
+- [x] LED 闪烁代码 + 编译 + 烧录成功
+- [x] 板子可靠性验证：SWD 直读寄存器确认时钟/GPIO/中断全正常（见 T-005）
+- [x] 屏幕背光点亮验证（28005 模块接 3.3V，供电回路正常）
+- [x] Phase 1 收尾裁决（ADR-006）：蓝灯硬件故障挂起，验证路径升级为寄存器级
+
+### 悬挂项
+- 🔴 蓝灯硬件故障（LED 坏/虚焊/走线断）—— 代码已验证正确（ODR 1Hz 方波），待万用表定性
+- 🟡 U4 背光脚文档冲突 —— 当前走 28005 路线不影响，Phase 5 若直插 U4 再定论
 
 ## 正在做
 
-用**屏幕背光**作为替代可见指示，验证"板子能正常驱动外部显示器件"。
-
-接线（只需 3 根母对母杜邦线，其余针脚全部悬空）：28005 模块 `VCC→3V3`、`GND→GND`、`LED→3V3`。
+Phase 2 准备中。待决策：Phase 2 第一步选哪个（见下方决策项）。
 
 ## 下一步计划
 
-1. 接好 3 根线（**先拍照给执行方确认再上电**）→ 预期背光整片亮起
-2. 若背光亮 → 板子对外驱动能力确认 OK，Phase 1 可收尾，蓝灯问题降级为"已知硬件异常"记录在案
-3. 蓝灯最终定性（用户有万用表后）：量 PC0 引脚对 GND，闪烁时应 0V↔3.3V 跳变
-4. **Phase 5 前置**：解决 `02` 与 `06` 号文件关于 "U4 pin4 是否 `LCD_BL_PD12`" 的冲突
+Phase 2 目标（plan.md）：
+- GPIO: LED（已验证，硬件挂起）/ Button（KEY_PC1）
+- UART: printf 重定向 + 串口日志
+- 理解: GPIO 寄存器 / HAL 封装 / 外设初始化
+- 产物: `[INFO] System Init OK / UART Ready`
+
+待用户确认：① Phase 2 第一步选 Button 还是 UART ② 有没有 USB-TTL 转换器（UART 需要）
 
 ## 阻塞问题
 
-- **PC0 蓝灯不亮**：已确认**不是软件问题**，故障在 `PC0 引脚 → 板上 LED2` 硬件段。不阻塞后续 Phase，但 Phase 1 的可见指示改用屏幕背光。
-- **Phase 5 前置项**：`02_屏幕引脚与接线图.md` 与 `06_核心板_原理图与引脚映射.md` 对 U4 是否有背光脚说法冲突，接 SPI 前需回原始原理图定论。
+无（Phase 1 已收尾，Phase 2 待选第一步）。
 
 ## 最近一次可运行状态
 
-- 命令：`pio run` / `pio run -t upload`（在 `SmartDeskTerminal_freertos/` 下）
-- 结果：编译 SUCCESS（Flash 3476B / RAM 44B）；烧录 `** Verified OK **` + `Resetting Target`
-- 现象：**PC0 蓝灯不亮**（预期 500ms 闪烁）；但 SWD 读出 PC0 实际输出为精确 1Hz 方波
-- 代码：`SmartDeskTerminal_freertos/src/main.c`（168MHz / PLLQ=7 / `-DHSE_VALUE=8000000U` / `SysTick_Handler` 到位）
+- 命令：`pio run -t upload`（在 `SmartDeskTerminal_freertos/` 下）
+- 结果：烧录成功 + SWD 寄存器验证全正常
+- 现象：PC0 蓝灯不亮（硬件故障，代码正确）；屏幕背光点亮正常
+- 代码：`SmartDeskTerminal_freertos/src/main.c`（PLLQ=7 / HSE_VALUE 宏 / SysTick_Handler / Error_Handler 快闪）
