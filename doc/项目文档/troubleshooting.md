@@ -13,6 +13,20 @@
 - 解决：废弃 `SmartDeskTerminal/`（Zephyr 工程），新建 `SmartDeskTerminal_freertos/`（`framework = stm32cube`）
 - 规则固化：建 PlatformIO 工程前，先确认 `framework` 字段对应的实际栈，别凭名字猜
 
+### T-005：烧录成功但 PC0 蓝灯不亮
+
+- 日期：2026-09-18
+- 现象：`pio run -t upload` 烧录成功（ST-LinkV2 闪三次 + PIO 终端提示成功），但 PC0 蓝灯完全不亮，无闪烁。
+- 代码：`SmartDeskTerminal_freertos/src/main.c` 完整（PLLQ=7 / HSE_VALUE 宏 / SysTick_Handler 都到位），逻辑无明显错误。
+- 排查方向（按可能性）：
+  1. **时钟配置失败进 Error_Handler 死循环**——HSE 8MHz 物理未起振（晶振虚焊/坏）→ `HAL_RCC_OscConfig` 返回 != HAL_OK → 进 `Error_Handler` while(1)，`LED_GPIO_Init` 根本没执行
+  2. LED 极性 / 硬件坏——但 `HAL_GPIO_TogglePin` 应至少看到微光或反相闪烁，完全不亮可能性低
+  3. HSE_VALUE 宏未传到编译——不影响 PLL 配置（PLLM 是除数），但影响 HAL_Delay 精度
+- 待验证：改 `Error_Handler` 加 LED 快闪指示，若快闪 = 时钟失败，定位到方向 1
+- 根因：待填
+- 解决：待填
+- 规则固化：待填
+
 ## 预期坑预警（按 Phase 预填）
 
 ### T-002（待踩）：FreeRTOS 在 PIO 里集成配置
