@@ -38,4 +38,4 @@ pio device monitor   # 看串口输出
 
 ## 项目规划
 
-总规划见工作区根 [../../plan.md](../../plan.md)（10 个 Phase）。
+总规划见 [plan.md](plan.md)（同目录，10 个 Phase）。

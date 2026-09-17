@@ -24,8 +24,13 @@ static void Error_Handler(void);
 int main(void)
 {
     HAL_Init();             /* 初始化 HAL：Flash 预取、NVIC 优先级分组、SysTick 时基 */
-    SystemClock_Config();   /* HSE 8MHz -> PLL -> SYSCLK 168MHz */
+
+    /* 先初始化 LED（诊断用）：此时仍跑在 HSI 16MHz 默认时钟上，不依赖 PLL。
+       这样即使后面 SystemClock_Config() 里 HSE 起振失败进了 Error_Handler，
+       PC0 也已经被配置成输出，Error_Handler 里的快闪才能被肉眼看到。 */
     LED_GPIO_Init();        /* PC0 配置为推挽输出 */
+
+    SystemClock_Config();   /* HSE 8MHz -> PLL -> SYSCLK 168MHz */
 
     while (1)
     {
@@ -107,12 +112,19 @@ void SysTick_Handler(void)
 }
 
 /**
-  * @brief  出错死循环（时钟配置失败时停在这里，方便用调试器定位）
+  * @brief  出错死循环（改成闪灯，用灯的节奏报告"我卡在这里了"）
+  * @note   这里用「软件空循环」延时，不能用 HAL_Delay()：
+  *         HAL_Delay 依赖 SysTick 中断累加计数，而本函数先 __disable_irq() 关了中断，
+  *         用 HAL_Delay 会直接死等。
   */
 static void Error_Handler(void)
 {
     __disable_irq();
     while (1)
     {
+        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
+        for (volatile uint32_t i = 0; i < 1000000; i++)
+        {
+        }
     }
 }

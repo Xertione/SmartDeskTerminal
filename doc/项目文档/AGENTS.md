@@ -7,7 +7,7 @@
 1. [progress.md](progress.md) —— 当前进度
 2. [decision-log.md](decision-log.md) —— 已定的取舍
 3. [troubleshooting.md](troubleshooting.md) —— 已踩/预期坑
-4. 工作区根 [../../plan.md](../../plan.md) —— 总规划与 10 Phase
+4. [plan.md](plan.md) —— 总规划与 10 Phase（同目录）
 
 > spec.md 暂未建（需求未冻结，由 plan.md 充当）。
 
