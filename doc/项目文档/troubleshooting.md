@@ -13,19 +13,32 @@
 - 解决：废弃 `SmartDeskTerminal/`（Zephyr 工程），新建 `SmartDeskTerminal_freertos/`（`framework = stm32cube`）
 - 规则固化：建 PlatformIO 工程前，先确认 `framework` 字段对应的实际栈，别凭名字猜
 
-### T-005：烧录成功但 PC0 蓝灯不亮
+### T-005：烧录成功但 PC0 蓝灯不亮 —— 软件侧已完全排除，判定为硬件段故障
 
 - 日期：2026-09-18
-- 现象：`pio run -t upload` 烧录成功（ST-LinkV2 闪三次 + PIO 终端提示成功），但 PC0 蓝灯完全不亮，无闪烁。
-- 代码：`SmartDeskTerminal_freertos/src/main.c` 完整（PLLQ=7 / HSE_VALUE 宏 / SysTick_Handler 都到位），逻辑无明显错误。
-- 排查方向（按可能性）：
-  1. **时钟配置失败进 Error_Handler 死循环**——HSE 8MHz 物理未起振（晶振虚焊/坏）→ `HAL_RCC_OscConfig` 返回 != HAL_OK → 进 `Error_Handler` while(1)，`LED_GPIO_Init` 根本没执行
-  2. LED 极性 / 硬件坏——但 `HAL_GPIO_TogglePin` 应至少看到微光或反相闪烁，完全不亮可能性低
-  3. HSE_VALUE 宏未传到编译——不影响 PLL 配置（PLLM 是除数），但影响 HAL_Delay 精度
-- 待验证：改 `Error_Handler` 加 LED 快闪指示，若快闪 = 时钟失败，定位到方向 1
-- 根因：待填
-- 解决：待填
-- 规则固化：待填
+- 现象：`pio run -t upload` 成功（日志有 `** Verified OK **` + `Resetting Target`），但 PC0 蓝灯**完全不亮**，闪烁也没有。
+- **排查过程（用 openocd 直连 SWD 读寄存器 + 反汇编，非推测）**：
+
+  | 读数 | 值 | 结论 |
+  |---|---|---|
+  | `RCC->CR` | `0x03037F83`（HSERDY=1 / PLLRDY=1） | HSE 8MHz 起振成功、PLL 锁定成功 |
+  | `RCC->CFGR` | `0x0000940A`（SW=10 / SWS=10） | 系统时钟**已实际**切到 PLL |
+  | `SystemCoreClock`（HAL 自算） | **168000000**（精确） | 主频 168MHz 正确，`-DHSE_VALUE=8000000U` 生效 |
+  | `uwTick` 相隔 2000ms 三次 | +2003 / +2013 | SysTick 每 1ms 精准加一、中断正常 |
+  | `GPIOC->MODER` | `0x...01` | PC0 = 输出模式 |
+  | `GPIOC->ODR` 每 250ms 采 20 次 | `0 1 1 0 0 1 1 0 0 1 1 0 1 1 0 0 1 1 0 0` | **精确 1Hz、50% 占空比方波** |
+  | `SCB->CFSR` / `HFSR` | `0` / `0` | 无 HardFault |
+  | PC 多次采样（`nm` 对照） | 落在 `HAL_GetTick`(0x08000560) / `HAL_Delay`(0x0800056C~94) | main 的 while 循环正在正常跑，**没进 Error_Handler** |
+  | 官方例程 `Drivers/User/Inc/led.h` | `LED1_PIN=GPIO_PIN_0` / `LED1_PORT=GPIOC`；`LED1_ON → BRR`（注释"LED1亮，此时IO口是低电平"） | 引脚确认 PC0、**极性为低电平点亮**，与我们代码逐项一致 |
+
+- 追加验证（排除极性误判）：用调试器把 PC0 **恒低电平**保持 5 分钟 → 灯仍不亮；再 **恒高电平**保持 10 分钟 → 灯仍不亮。
+- 根因：**MCU 侧全部正常**（时钟 / 中断 / GPIO 输出级 / 下载调试链路均已证明）。故障落在 **`PC0` 引脚 → 板上用户蓝灯 LED2 之间**（LED 本体坏 / 焊点虚焊 / 走线断）。
+- 解决：**挂起**，等用户用万用表量 PC0 引脚（闪烁时应在 0V↔3.3V 跳变）做最终定性。Phase 1 的"可见指示"改用**屏幕背光**替代（28005 转接板 `LED` 脚接 3.3V，高电平点亮）。
+- 规则固化：
+  1. **"灯不亮"不要靠猜。** 先用 SWD 读 `RCC->CR/CFGR`、`GPIO->MODER/ODR`、`SCB->CFSR`，一次就能分清"没跑起来 / 跑在别的时钟 / 跑了但没配好 / 软件全对是硬件坏"。
+  2. `ODR` / `IDR` 只能证明**芯片内部输出级**正常，**证明不了**引脚焊点到外部负载是否连通 —— 这是本次的关键边界。
+  3. 给 `Error_Handler` 加闪灯指示时，循环次数必须按**失败分支的真实主频**校准：`for(i=0;i<1000000;i++)` 在 HSI 16MHz 下是 **~1 秒半周期（慢闪）**，会和正常 500ms 闪烁混淆，不是"快闪"。
+  4. 查 LED 引脚/极性，一定要连官方例程的 `Drivers/User/Inc/led.h` 一起看，别只看 main.c。
 
 ## 预期坑预警（按 Phase 预填）
 
