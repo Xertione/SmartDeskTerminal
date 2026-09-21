@@ -370,3 +370,48 @@ pio run -t upload
 
 1. 改代码 → 2. 点 **Build**（✓ 图标）确认 0 error → 3. 点 **Upload**（→ 图标）→ 4. 看 `** Verified OK **`。
 
+## 附录 D：两个必须知道的构建/引脚陷阱
+
+### D-1 Upload 与 F5 用的是**两份不同的构建**，变量地址不一样
+
+`platformio.ini` 里有两套编译选项：
+
+| 选项 | 何时生效 | 内容 |
+| --- | --- | --- |
+| `build_flags` | 点 **Build / Upload**（release） | `-DHSE_VALUE=8000000U` `-Os` |
+| `debug_build_flags` | 按 **F5**（PIO Debug） | `-DHSE_VALUE=8000000U` `-g` `-O0` |
+
+关键（已查 PIO 源码 `builder/tools/piomisc.py:95-112` 确认）：**`debug_build_flags` 是「替换」而不是「追加」** —— PIO 会先把 `-Os`、`-g`、`-O0~-O3` 从选项里**删掉**，再合并 `debug_build_flags`。
+
+后果：`-Os` 与 `-O0` 生成的代码布局不同 → **同一个全局变量在两份固件里的地址不同**。
+
+| 做法 | 结果 |
+| --- | --- |
+| 只按 **F5** 调试 | ✅ PIO Debug 用 debug 产物并下载**同一份** ELF → 按变量名监视是准的 |
+| 先 **Upload** 再按 **F5** | ⚠️ F5 会重新编译并**重新下载**（-O0 版），芯片里最终是 debug 版 → 仍然自洽，但要知道"刚才 Upload 的那份被覆盖了" |
+| 先 **Upload**，然后用别的工具（openocd 手敲）**按名字**读变量 | ❌ 地址取自 release 版、芯片里是 release 版时才对；一旦混用就必错 |
+
+**纪律**：读内存前，一律先用下方命令取**当前**地址，绝不沿用上一轮的地址（在 VS Code 终端执行，输出里搜符号名即可）：
+
+```bash
+"C:/.platformio/packages/toolchain-gccarmnoneeabi@1.70201.0/bin/arm-none-eabi-nm.exe" -n .pio/build/black_f407ve/firmware.elf
+```
+
+输出形如 `20000084 B spi_test_done` —— 第一列就是地址（`-n` 表示按地址排序）。
+
+监视窗口里若按变量名读不到（显示 `optimized out` 或找不到符号），在 **DEBUG CONSOLE** 里敲 `p &变量名` 拿到地址，再写成 `*(volatile uint8_t*)0x地址`。
+
+### D-2 F407 上 PA15 / PB3 / PB4 怎么释放（和 F1 完全不同）
+
+本工程用 **PA15 做屏的 CS**，而 PA15 复位后是 **JTDI**；PB3 是 **JTDO**。很多人会去找「禁用 JTAG」的宏 —— **STM32F4 没有这个宏，这是正常的**。
+
+| 系列 | 释放方式 |
+| --- | --- |
+| STM32**F1** | 调 `GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE)` 改 AFIO_MAPR 的 SWJ_CFG 位 |
+| STM32**F4**（本板） | **没有 AFIO / SWJ_CFG 寄存器**（`stm32f407xx.h` 里连 `AFIO_BASE` 都没有，框架头文件也没有 `__HAL_AFIO_REMAP_SWJ_NOJTAG`）。**只要在 GPIO_MODER 里把这几个脚配成输出或复用功能，即自动释放** |
+
+依据：参考手册 RM0090 §33.4.4 原文 ——「为了利用串行调试接口以便释放一些 GPIO，用户软件必须在 **GPIO_MODER 寄存器**中更改 GPIO（PA15、PB3 和 PB4）配置模式。」
+
+所以 `HAL_GPIO_Init()` 配完 PA15/PB3 就已经释放了，**不需要额外代码**；SWD 调试（PA13/PA14）也不受影响。反过来说：**不要照抄 F1 的"禁用 JTAG"教程**，F4 上那套 API 不存在。
+
+

@@ -50,5 +50,16 @@
 void LCD_Init(void);                 /* GPIO + SPI + 硬件复位（背光常亮） */
 void LCD_Write_Cmd(uint8_t cmd);     /* 发命令：DC=0 */
 void LCD_Write_Data(uint8_t data);   /* 发数据：DC=1 */
+void LCD_ST7789_Init(void);          /* ST7789 初始化序列（15步，厂方 TN Code） */
+void LCD_Write_Data16(uint16_t data); /* 发 16 位数据（RGB565，高字节先发） */
+void LCD_SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1); /* 设显示窗口 */
+void LCD_FillScreen(uint16_t color);  /* 填充全屏单色（240×320） */
+
+/* RGB565 常用颜色 */
+#define LCD_RED    0xF800
+#define LCD_GREEN  0x07E0
+#define LCD_BLUE   0x001F
+#define LCD_WHITE  0xFFFF
+#define LCD_BLACK  0x0000
 
 #endif /* __BSP_LCD_H */

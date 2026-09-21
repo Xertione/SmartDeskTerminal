@@ -9,8 +9,8 @@
   * Phase 2（T-006）追加：Key_Init() + key_state 轮询（BSP 模块 1 = PC1 按键输入），
   *       验证按键输入通路；LED 闪烁保留作为运行心跳。
   *
-  * Phase 5（T-008，提前，ADR-009）追加：LCD_Init() + LCD_Write_Cmd(0x11)（BSP 模块 2 = SPI3 屏），
-  *       验证 SPI3 通信层（SWD 监视 spi_test_done + SPI3->SR 的 TXE 位）。
+  * Phase 5（T-008 STEP2，提前，ADR-009）追加：LCD_ST7789_Init() 初始化序列 + LCD_FillScreen() 填充，
+  *       验证屏亮起颜色（红/绿/蓝交替）= 初始化序列正确 + 显示数据通路通。
   *
   * 参考：doc/核心板资料/.../【1】参考例程/HAL库/1.LED闪烁（官方例程，时钟参数照抄）
   * 引脚：LED_PC0（见 doc/datasheets_md/06_核心板_原理图与引脚映射.md 第 2 节）
@@ -51,15 +51,22 @@ int main(void)
 
     Key_Init();             /* BSP 模块 1：PC1 上拉输入 */
     LCD_Init();             /* BSP 模块 2：屏幕 GPIO + SPI3 + 硬件复位（背光常亮） */
-    LCD_Write_Cmd(0x11);   /* ST7789 Sleep Out 命令，唤醒屏幕（最小验证：SPI 能发命令） */
-    spi_test_done = 1;      /* 标记 SPI 发送完成，SWD 监视此变量=1 表示 LCD_Write_Cmd 跑过 */
+    LCD_ST7789_Init();      /* ST7789 初始化序列（15步，厂方 TN Code） */
+    LCD_FillScreen(LCD_RED); /* 填充全屏红色，验证显示通路 */
+    spi_test_done = 1;      /* 标记初始化完成 */
+
+    uint8_t color_idx = 0;
+    const uint16_t colors[] = {LCD_RED, LCD_GREEN, LCD_BLUE};
 
     while (1)
     {
+        LCD_FillScreen(colors[color_idx]);  /* 每 1 秒红/绿/蓝交替 */
+        color_idx = (color_idx + 1) % 3;
+
         key_state = (uint8_t)Key_Read();   /* 1 = 松开 / 0 = 按下，供调试器监视 */
 
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
-        HAL_Delay(500);     /* 依赖下面的 SysTick_Handler 调用 HAL_IncTick() */
+        HAL_Delay(1000);     /* 1 秒切一次颜色 */
     }
 }
 
