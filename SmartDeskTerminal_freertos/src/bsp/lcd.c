@@ -4,11 +4,13 @@
   * @brief   BSP - ST7789V LCD 模块实现（SPI3 接口）
   *
  * 本文件含：① SPI 通信层（GPIO + SPI3 初始化 + 收发命令/数据）
- *           ② ST7789 初始化序列 LCD_ST7789_Init()（STEP2）
- *           ③ 全屏单色填充 LCD_FillScreen()（STEP2）
+ *           ② ST7789 初始化序列 LCD_ST7789_Init()（STEP2，实机已验证）
+ *           ③ 全屏单色填充 LCD_FillScreen()（STEP2，实机已验证）
+ *           ④ 字符渲染 LCD_DrawChar / LCD_DrawString（STEP3，8×16 点阵字模，字模见 bsp/font.h）
  *
- * 验证目标（T-008 STEP2）：
- *   烧录后屏幕红→绿→蓝每秒交替 = 初始化序列正确 + 显示数据通路全通
+ * 验证目标（T-008 STEP3）：
+ *   烧录后屏显示 "Hello SmartDesk" + 屏信息 + SYSCLK 数值 + 实时 Key 状态
+ *   = 字模渲染通路通（文字清晰、不缺笔画）
   ******************************************************************************
   */
 

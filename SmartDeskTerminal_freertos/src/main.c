@@ -12,6 +12,9 @@
   * Phase 5（T-008 STEP3，提前，ADR-009）追加：LCD_DrawString 字符显示，
   *       验证屏亮文字（Hello SmartDesk + SystemCoreClock + Key 状态）= 字模渲染通路通。
   *
+  * Phase 7（T-009，提前，ADR-009）追加：Touch 驱动 + 触摸按钮交互验证，
+  *       屏画按钮，触摸按钮变色 + 计数 + 显示触摸坐标。
+  *
   * 参考：doc/核心板资料/.../【1】参考例程/HAL库/1.LED闪烁（官方例程，时钟参数照抄）
   * 引脚：LED_PC0（见 doc/datasheets_md/06_核心板_原理图与引脚映射.md 第 2 节）
   ******************************************************************************
@@ -20,6 +23,7 @@
 #include "stm32f4xx_hal.h"
 #include "bsp/key.h"
 #include "bsp/lcd.h"
+#include "bsp/touch.h"
 
 /* ---------------------------- 全局变量 ---------------------------- */
 /* 按键当前状态：1 = 松开（上拉高电平）/ 0 = 按下（PC1 接 GND）。
@@ -30,75 +34,143 @@ volatile uint8_t key_state = KEY_RELEASED;
    作用：断点停在 while 循环时，读这个变量=1 表示 SPI3 发送链路执行了。 */
 volatile uint8_t spi_test_done = 0;
 
+/* Phase 7：触摸状态（供 SWD 监视） */
+volatile uint16_t touch_x = 0xFFFF;
+volatile uint16_t touch_y = 0xFFFF;
+volatile uint8_t  touch_pressed = 0;
+volatile uint8_t  button_hit_count = 0;  /* 按钮被点中次数 */
+
+/* 按钮区域定义（屏幕坐标） */
+#define BTN_X 60
+#define BTN_Y 200
+#define BTN_W 120
+#define BTN_H 40
+
 /* ---------------------------- 函数声明 ---------------------------- */
 static void SystemClock_Config(void);
 static void LED_GPIO_Init(void);
 static void Error_Handler(void);
+static void int_to_str(uint32_t val, char *buf);  /* 整数转字符串 */
 
 /**
   * @brief  主程序入口
   */
 int main(void)
 {
-    HAL_Init();             /* 初始化 HAL：Flash 预取、NVIC 优先级分组、SysTick 时基 */
+    HAL_Init();
+    LED_GPIO_Init();
+    SystemClock_Config();
 
-    /* 先初始化 LED（诊断用）：此时仍跑在 HSI 16MHz 默认时钟上，不依赖 PLL。
-       这样即使后面 SystemClock_Config() 里 HSE 起振失败进了 Error_Handler，
-       PC0 也已经被配置成输出，Error_Handler 里的快闪才能被肉眼看到。 */
-    LED_GPIO_Init();        /* PC0 配置为推挽输出 */
+    Key_Init();
+    LCD_Init();
+    LCD_ST7789_Init();
+    Touch_Init();
 
-    SystemClock_Config();   /* HSE 8MHz -> PLL -> SYSCLK 168MHz */
-
-    Key_Init();             /* BSP 模块 1：PC1 上拉输入 */
-    LCD_Init();             /* BSP 模块 2：屏幕 GPIO + SPI3 + 硬件复位（背光常亮） */
-    LCD_ST7789_Init();      /* ST7789 初始化序列（15步，厂方 TN Code） */
-
-    /* STEP3：字符显示验证
-       清屏黑色 → 画标题（白字）+ 画主频信息（绿字）+ 画按键状态行（黄字） */
+    /* 界面：黑底标题 + 信息行 */
     LCD_FillScreen(LCD_BLACK);
-    LCD_DrawString(8,  10, "Hello SmartDesk",  LCD_WHITE, LCD_BLACK);
-    LCD_DrawString(8,  40, "LCD: ST7789V 240x320", LCD_GREEN, LCD_BLACK);
-    LCD_DrawString(8,  60, "SPI3 @ 2.6MHz",    LCD_GREEN, LCD_BLACK);
+    LCD_DrawString(8,  10, "Hello SmartDesk",       LCD_WHITE,  LCD_BLACK);
+    LCD_DrawString(8,  40, "LCD: ST7789V 240x320",  LCD_GREEN,  LCD_BLACK);
+    LCD_DrawString(8,  60, "Touch: XPT2046 RTP",    LCD_GREEN,  LCD_BLACK);
 
-    /* 画 SystemCoreClock 数值（把数字转成字符串） */
+    /* SYSCLK 数值 */
     {
         char buf[24];
-        uint32_t clk = SystemCoreClock;
-        /* 简单整数转字符串（不用 sprintf，省库） */
-        int i = 0;
-        if (clk == 0) { buf[i++] = '0'; }
-        else {
-            char tmp[12];
-            int t = 0;
-            while (clk > 0) { tmp[t++] = '0' + (clk % 10); clk /= 10; }
-            while (t > 0) { buf[i++] = tmp[--t]; }
-        }
-        buf[i] = 0;
+        int_to_str(SystemCoreClock, buf);
         LCD_DrawString(8,  80, "SYSCLK:", LCD_CYAN, LCD_BLACK);
         LCD_DrawString(8 + 8*7, 80, buf, LCD_CYAN, LCD_BLACK);
         LCD_DrawString(8 + 8*7, 80, " Hz", LCD_CYAN, LCD_BLACK);
     }
 
-    spi_test_done = 1;      /* 标记初始化 + 字符显示完成 */
+    /* 画触摸按钮（绿底白字）—— 画矩形 + 写字 */
+    {
+        uint16_t by;
+        for (by = BTN_Y; by < BTN_Y + BTN_H; by++)
+        {
+            LCD_SetAddrWindow(BTN_X, by, BTN_X + BTN_W - 1, by);
+            LCD_Write_Cmd(0x2C);
+            for (uint16_t bx = 0; bx < BTN_W; bx++) LCD_Write_Data16(LCD_GREEN);
+        }
+        LCD_DrawString(BTN_X + 16, BTN_Y + 12, "PRESS ME", LCD_WHITE, LCD_GREEN);
+    }
+
+    LCD_DrawString(8, 150, "Touch:", LCD_YELLOW, LCD_BLACK);
+    LCD_DrawString(8, 170, "Hits:",  LCD_YELLOW, LCD_BLACK);
+
+    spi_test_done = 1;
+    uint8_t last_pressed = 0;
+    char numbuf[12];
 
     while (1)
     {
-        key_state = (uint8_t)Key_Read();   /* 1 = 松开 / 0 = 按下 */
+        key_state = (uint8_t)Key_Read();
 
-        /* 在第 5 行实时刷新按键状态。
-           先用背景色把旧字擦掉（覆盖写一遍黑底黑字），再写新状态。 */
-        if (key_state)
+        /* 读触摸 */
+        TouchPoint tp = Touch_Read();
+        touch_x = tp.x;
+        touch_y = tp.y;
+        touch_pressed = tp.pressed;
+
+        /* 触摸坐标显示 */
+        int_to_str(touch_x, numbuf);
+        LCD_DrawString(8 + 8*6, 150, "      ", LCD_BLACK, LCD_BLACK);
+        if (tp.pressed) LCD_DrawString(8 + 8*6, 150, numbuf, LCD_WHITE, LCD_BLACK);
+
+        int_to_str(touch_y, numbuf);
+        LCD_DrawString(8 + 8*6 + 8*7, 150, "      ", LCD_BLACK, LCD_BLACK);
+        if (tp.pressed) LCD_DrawString(8 + 8*6 + 8*7, 150, numbuf, LCD_WHITE, LCD_BLACK);
+
+        /* 按钮 hit-test（边沿检测：仅"刚按下"触发） */
+        if (tp.pressed && !last_pressed)
         {
-            LCD_DrawString(8, 100, "Key: RELEASED", LCD_GREEN, LCD_BLACK);
+            if (tp.x >= BTN_X && tp.x < BTN_X + BTN_W &&
+                tp.y >= BTN_Y && tp.y < BTN_Y + BTN_H)
+            {
+                button_hit_count++;
+                /* 闪红反馈 */
+                uint16_t by;
+                for (by = BTN_Y; by < BTN_Y + BTN_H; by++)
+                {
+                    LCD_SetAddrWindow(BTN_X, by, BTN_X + BTN_W - 1, by);
+                    LCD_Write_Cmd(0x2C);
+                    for (uint16_t bx = 0; bx < BTN_W; bx++) LCD_Write_Data16(LCD_RED);
+                }
+                LCD_DrawString(BTN_X + 16, BTN_Y + 12, "HIT!   ", LCD_WHITE, LCD_RED);
+                HAL_Delay(200);
+                /* 恢复绿色 */
+                for (by = BTN_Y; by < BTN_Y + BTN_H; by++)
+                {
+                    LCD_SetAddrWindow(BTN_X, by, BTN_X + BTN_W - 1, by);
+                    LCD_Write_Cmd(0x2C);
+                    for (uint16_t bx = 0; bx < BTN_W; bx++) LCD_Write_Data16(LCD_GREEN);
+                }
+                LCD_DrawString(BTN_X + 16, BTN_Y + 12, "PRESS ME", LCD_WHITE, LCD_GREEN);
+            }
         }
-        else
-        {
-            LCD_DrawString(8, 100, "Key: PRESSED ", LCD_YELLOW, LCD_BLACK);
-        }
+        last_pressed = tp.pressed;
+
+        /* Hits 计数 */
+        int_to_str(button_hit_count, numbuf);
+        LCD_DrawString(8 + 8*6, 170, "    ", LCD_BLACK, LCD_BLACK);
+        LCD_DrawString(8 + 8*6, 170, numbuf, LCD_YELLOW, LCD_BLACK);
 
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
-        HAL_Delay(200);     /* 200ms 刷新一次按键显示 */
+        HAL_Delay(50);
     }
+}
+
+/**
+  * @brief  整数转字符串（不用 sprintf 省 Flash）
+  * @retval 写入 buf，返回长度（buf 里是 \0 结尾字符串）
+  */
+static void int_to_str(uint32_t val, char *buf)
+{
+    if (val == 0) { buf[0] = '0'; buf[1] = 0; return; }
+    char tmp[12];
+    int t = 0;
+    while (val > 0) { tmp[t++] = '0' + (val % 10); val /= 10; }
+    int i = 0;
+    while (t > 0) { buf[i++] = tmp[--t]; }
+    buf[i] = 0;
 }
 
 /**
