@@ -9,6 +9,9 @@
   * Phase 2（T-006）追加：Key_Init() + key_state 轮询（BSP 模块 1 = PC1 按键输入），
   *       验证按键输入通路；LED 闪烁保留作为运行心跳。
   *
+  * Phase 5（T-008，提前，ADR-009）追加：LCD_Init() + LCD_Write_Cmd(0x11)（BSP 模块 2 = SPI3 屏），
+  *       验证 SPI3 通信层（SWD 监视 spi_test_done + SPI3->SR 的 TXE 位）。
+  *
   * 参考：doc/核心板资料/.../【1】参考例程/HAL库/1.LED闪烁（官方例程，时钟参数照抄）
   * 引脚：LED_PC0（见 doc/datasheets_md/06_核心板_原理图与引脚映射.md 第 2 节）
   ******************************************************************************
@@ -16,11 +19,16 @@
 
 #include "stm32f4xx_hal.h"
 #include "bsp/key.h"
+#include "bsp/lcd.h"
 
 /* ---------------------------- 全局变量 ---------------------------- */
 /* 按键当前状态：1 = 松开（上拉高电平）/ 0 = 按下（PC1 接 GND）。
    加 volatile 是为了让调试器能读到主循环里的最新值，不被编译器优化掉。 */
 volatile uint8_t key_state = KEY_RELEASED;
+
+/* Phase 5：LCD_Write_Cmd 执行后置 1，供 SWD 监视验证 SPI 通信跑过。
+   作用：断点停在 while 循环时，读这个变量=1 表示 SPI3 发送链路执行了。 */
+volatile uint8_t spi_test_done = 0;
 
 /* ---------------------------- 函数声明 ---------------------------- */
 static void SystemClock_Config(void);
@@ -42,6 +50,9 @@ int main(void)
     SystemClock_Config();   /* HSE 8MHz -> PLL -> SYSCLK 168MHz */
 
     Key_Init();             /* BSP 模块 1：PC1 上拉输入 */
+    LCD_Init();             /* BSP 模块 2：屏幕 GPIO + SPI3 + 硬件复位（背光常亮） */
+    LCD_Write_Cmd(0x11);   /* ST7789 Sleep Out 命令，唤醒屏幕（最小验证：SPI 能发命令） */
+    spi_test_done = 1;      /* 标记 SPI 发送完成，SWD 监视此变量=1 表示 LCD_Write_Cmd 跑过 */
 
     while (1)
     {
