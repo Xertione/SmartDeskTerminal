@@ -80,6 +80,27 @@
   - **优点**：repo 27 文件，轻量；clone 快；focus 在项目代码 + 精简文档
   - **代价**：原厂例程源码不在 repo，查例程细节要翻磁盘 `doc/核心板资料/`（不入 git，换机丢失）；需在 README 标注"原厂资料磁盘有，repo 不跟踪"
 
+## ADR-008：T-007 UART printf 跳过 + Phase 2 部分收尾
+
+- 日期：2026-09-21
+- 背景：Phase 2 两个目标——T-006 Button（KEY_PC1）+ T-007 UART printf 重定向。用户无 CH340/USB-TTL 转换器，串口打印通道不可用。ST-Link V2 克隆棒（0483:3748）通常无 VCP。
+- T-006 实际状态：
+  - 代码完成（key.c/key.h，对照官方例程，引脚/极性/寄存器配置正确）
+  - 编译烧录 Verified OK（Flash 3588B）
+  - 基线验证通过（不接线=1，1001 次采样零抖动）
+  - **功能验证挂起**（短接 PC1↔GND=0 未执行，因 ST-Link 未连接）
+- T-007 决定：**跳过**（整个 UART 模块不建立，不只跳过 printf 重定向）
+- 原因：用户无 CH340，printf 通道物理不可用；用户选择跳过而非购买/自发自收验证
+- 后果：
+  - **优点**：不阻塞 Phase 3 推进；省去等硬件的时间
+  - **代价（关键风险）**：
+    1. **FreeRTOS 调试缺 printf 通道**——Phase 3 任务切换/队列/信号量是时序相关，SWD 断点会冻结调度器，断点现场≠真实运行时序。没有 printf 看"任务调度历史"，FreeRTOS 时序 bug 极难定位
+    2. **Phase 3-7 调试全靠 SWD 读变量**——能查"卡住那一刻"的值，查不到"时间序列上的变化"
+    3. **plan.md Phase 2 产物 `[INFO] System Init OK / UART Ready` 未达成**——Phase 2 不算完整收尾，记"部分完成"
+    4. **退路**：Phase 8 USB CDC 实现后，可用 USB 虚拟串口替代物理 UART 做 printf 通道——但 Phase 8 在 Phase 3-7 之后
+  - **后续触发**：若 Phase 3 FreeRTOS 集成受阻且根因属时序问题，回头补 UART（买 CH340 或做自发自收）再继续
+  - **挂起项**：T-006 功能验证（短接=0）5 分钟可补，建议进 Phase 3 前补完，让 GPIO 那半干净收尾
+
 ## ADR-NNN：<待追加>
 
 > 做下一个取舍时在此追加。

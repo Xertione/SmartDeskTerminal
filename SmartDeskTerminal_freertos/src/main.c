@@ -6,12 +6,21 @@
   * 目标：PC0 用户 LED（蓝光）以 500ms 亮 / 500ms 灭 闪烁，
   *       用来验证「板子 + 供电 + ST-Link 下载」这条链路正常（无虚焊 / 无物理错误）。
   *
+  * Phase 2（T-006）追加：Key_Init() + key_state 轮询（BSP 模块 1 = PC1 按键输入），
+  *       验证按键输入通路；LED 闪烁保留作为运行心跳。
+  *
   * 参考：doc/核心板资料/.../【1】参考例程/HAL库/1.LED闪烁（官方例程，时钟参数照抄）
   * 引脚：LED_PC0（见 doc/datasheets_md/06_核心板_原理图与引脚映射.md 第 2 节）
   ******************************************************************************
   */
 
 #include "stm32f4xx_hal.h"
+#include "bsp/key.h"
+
+/* ---------------------------- 全局变量 ---------------------------- */
+/* 按键当前状态：1 = 松开（上拉高电平）/ 0 = 按下（PC1 接 GND）。
+   加 volatile 是为了让调试器能读到主循环里的最新值，不被编译器优化掉。 */
+volatile uint8_t key_state = KEY_RELEASED;
 
 /* ---------------------------- 函数声明 ---------------------------- */
 static void SystemClock_Config(void);
@@ -32,8 +41,12 @@ int main(void)
 
     SystemClock_Config();   /* HSE 8MHz -> PLL -> SYSCLK 168MHz */
 
+    Key_Init();             /* BSP 模块 1：PC1 上拉输入 */
+
     while (1)
     {
+        key_state = (uint8_t)Key_Read();   /* 1 = 松开 / 0 = 按下，供调试器监视 */
+
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
         HAL_Delay(500);     /* 依赖下面的 SysTick_Handler 调用 HAL_IncTick() */
     }
