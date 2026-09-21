@@ -3,11 +3,12 @@
   * @file    bsp/lcd.c
   * @brief   BSP - ST7789V LCD 模块实现（SPI3 接口）
   *
-  * 本文件只做「SPI 通信层」：GPIO 配置 + SPI 外设初始化 + 收发命令/数据。
-  * 不含 ST7789 初始化序列、不含显示逻辑（后续 STEP2+ 补）。
-  *
-  * 验证目标（T-008 STEP1）：
-  *   编译烧录后，背光常亮 + SWD 监视 SPI3->SR 的 TXE 位 = 1（表示 SPI 发过数据且缓冲区空）
+ * 本文件含：① SPI 通信层（GPIO + SPI3 初始化 + 收发命令/数据）
+ *           ② ST7789 初始化序列 LCD_ST7789_Init()（STEP2）
+ *           ③ 全屏单色填充 LCD_FillScreen()（STEP2）
+ *
+ * 验证目标（T-008 STEP2）：
+ *   烧录后屏幕红→绿→蓝每秒交替 = 初始化序列正确 + 显示数据通路全通
   ******************************************************************************
   */
 
@@ -94,7 +95,7 @@ void LCD_SPI_Init(void)
   * @note   硬件复位时序：RST 拉低 ≥10ms → 拉高 → 等 ≥120ms（ST7789 规格书要求）
   *         必须在 SystemClock_Config 之后调用（用到 HAL_Delay）
   */
-static void LCD_Init(void)
+void LCD_Init(void)
 {
     LCD_GPIO_Init();
     LCD_SPI_Init();
