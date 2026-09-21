@@ -13,6 +13,7 @@
   */
 
 #include "bsp/lcd.h"
+#include "bsp/font.h"
 
 /* SPI 句柄：模块内部 static，外部通过 LCD_Write_Cmd/Data 间接访问 */
 static SPI_HandleTypeDef hspi3;
@@ -257,4 +258,63 @@ void LCD_ST7789_Init(void)
     /* 15. Display On */
     LCD_Write_Cmd(0x29);
     HAL_Delay(10);  /* 等 10ms 让显示稳定 */
+}
+
+/**
+  * @brief  在指定位置画一个字符（8×16 点阵）
+  * @param  x, y  字符左上角像素坐标（0~239, 0~319）
+  * @param  ch    要画的字符（0x20~0x7E，超出范围画空格）
+  * @param  fg    前景色（RGB565，字本身）
+  * @param  bg    背景色（RGB565，字周围的填充）
+  * @note   每个字符占 8×16 像素。逐行扫描：每行读 1 字节字模，
+  *         bit=1 画前景色，bit=0 画背景色。用 SetAddrWindow 设窗口后连续写。
+  */
+void LCD_DrawChar(uint16_t x, uint16_t y, char ch, uint16_t fg, uint16_t bg)
+{
+    const uint8_t *glyph;
+    uint8_t c = (uint8_t)ch;
+
+    /* 字模索引：0x20~0x7E 映射到 0~94。超范围用空格(0x20) */
+    if (c < 0x20 || c > 0x7E) c = 0x20;
+    glyph = ascii_8x16[c - 0x20];
+
+    /* 设窗口：8 列 × 16 行 */
+    LCD_SetAddrWindow(x, y, x + FONT_W - 1, y + FONT_H - 1);
+    LCD_Write_Cmd(0x2C);  /* RAMWR */
+
+    /* 逐行扫描：16 行，每行 1 字节 */
+    for (uint8_t row = 0; row < FONT_H; row++)
+    {
+        uint8_t bits = glyph[row];
+        for (uint8_t col = 0; col < FONT_W; col++)
+        {
+            /* MSB 在先：bit7 = 最左列 */
+            if (bits & (0x80 >> col))
+            {
+                LCD_Write_Data16(fg);
+            }
+            else
+            {
+                LCD_Write_Data16(bg);
+            }
+        }
+    }
+}
+
+/**
+  * @brief  画字符串
+  * @note   从 (x,y) 起逐字符画，自动换行不处理（超出屏宽截断）。
+  *         每字符宽 8 像素，一行最多 30 字符（240/8）。
+  */
+void LCD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t fg, uint16_t bg)
+{
+    uint16_t cx = x;
+    while (*str)
+    {
+        /* 超出屏宽停止（不换行，简单实现） */
+        if (cx + FONT_W > 240) break;
+        LCD_DrawChar(cx, y, *str, fg, bg);
+        cx += FONT_W;
+        str++;
+    }
 }

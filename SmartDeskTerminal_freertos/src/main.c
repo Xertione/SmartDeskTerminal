@@ -9,8 +9,8 @@
   * Phase 2（T-006）追加：Key_Init() + key_state 轮询（BSP 模块 1 = PC1 按键输入），
   *       验证按键输入通路；LED 闪烁保留作为运行心跳。
   *
-  * Phase 5（T-008 STEP2，提前，ADR-009）追加：LCD_ST7789_Init() 初始化序列 + LCD_FillScreen() 填充，
-  *       验证屏亮起颜色（红/绿/蓝交替）= 初始化序列正确 + 显示数据通路通。
+  * Phase 5（T-008 STEP3，提前，ADR-009）追加：LCD_DrawString 字符显示，
+  *       验证屏亮文字（Hello SmartDesk + SystemCoreClock + Key 状态）= 字模渲染通路通。
   *
   * 参考：doc/核心板资料/.../【1】参考例程/HAL库/1.LED闪烁（官方例程，时钟参数照抄）
   * 引脚：LED_PC0（见 doc/datasheets_md/06_核心板_原理图与引脚映射.md 第 2 节）
@@ -52,21 +52,52 @@ int main(void)
     Key_Init();             /* BSP 模块 1：PC1 上拉输入 */
     LCD_Init();             /* BSP 模块 2：屏幕 GPIO + SPI3 + 硬件复位（背光常亮） */
     LCD_ST7789_Init();      /* ST7789 初始化序列（15步，厂方 TN Code） */
-    LCD_FillScreen(LCD_RED); /* 填充全屏红色，验证显示通路 */
-    spi_test_done = 1;      /* 标记初始化完成 */
 
-    uint8_t color_idx = 0;
-    const uint16_t colors[] = {LCD_RED, LCD_GREEN, LCD_BLUE};
+    /* STEP3：字符显示验证
+       清屏黑色 → 画标题（白字）+ 画主频信息（绿字）+ 画按键状态行（黄字） */
+    LCD_FillScreen(LCD_BLACK);
+    LCD_DrawString(8,  10, "Hello SmartDesk",  LCD_WHITE, LCD_BLACK);
+    LCD_DrawString(8,  40, "LCD: ST7789V 240x320", LCD_GREEN, LCD_BLACK);
+    LCD_DrawString(8,  60, "SPI3 @ 2.6MHz",    LCD_GREEN, LCD_BLACK);
+
+    /* 画 SystemCoreClock 数值（把数字转成字符串） */
+    {
+        char buf[24];
+        uint32_t clk = SystemCoreClock;
+        /* 简单整数转字符串（不用 sprintf，省库） */
+        int i = 0;
+        if (clk == 0) { buf[i++] = '0'; }
+        else {
+            char tmp[12];
+            int t = 0;
+            while (clk > 0) { tmp[t++] = '0' + (clk % 10); clk /= 10; }
+            while (t > 0) { buf[i++] = tmp[--t]; }
+        }
+        buf[i] = 0;
+        LCD_DrawString(8,  80, "SYSCLK:", LCD_CYAN, LCD_BLACK);
+        LCD_DrawString(8 + 8*7, 80, buf, LCD_CYAN, LCD_BLACK);
+        LCD_DrawString(8 + 8*7, 80, " Hz", LCD_CYAN, LCD_BLACK);
+    }
+
+    spi_test_done = 1;      /* 标记初始化 + 字符显示完成 */
 
     while (1)
     {
-        LCD_FillScreen(colors[color_idx]);  /* 每 1 秒红/绿/蓝交替 */
-        color_idx = (color_idx + 1) % 3;
+        key_state = (uint8_t)Key_Read();   /* 1 = 松开 / 0 = 按下 */
 
-        key_state = (uint8_t)Key_Read();   /* 1 = 松开 / 0 = 按下，供调试器监视 */
+        /* 在第 5 行实时刷新按键状态。
+           先用背景色把旧字擦掉（覆盖写一遍黑底黑字），再写新状态。 */
+        if (key_state)
+        {
+            LCD_DrawString(8, 100, "Key: RELEASED", LCD_GREEN, LCD_BLACK);
+        }
+        else
+        {
+            LCD_DrawString(8, 100, "Key: PRESSED ", LCD_YELLOW, LCD_BLACK);
+        }
 
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
-        HAL_Delay(1000);     /* 1 秒切一次颜色 */
+        HAL_Delay(200);     /* 200ms 刷新一次按键显示 */
     }
 }
 

@@ -54,12 +54,17 @@ void LCD_ST7789_Init(void);          /* ST7789 初始化序列（15步，厂方 
 void LCD_Write_Data16(uint16_t data); /* 发 16 位数据（RGB565，高字节先发） */
 void LCD_SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1); /* 设显示窗口 */
 void LCD_FillScreen(uint16_t color);  /* 填充全屏单色（240×320） */
+void LCD_DrawChar(uint16_t x, uint16_t y, char ch, uint16_t fg, uint16_t bg); /* 画单字符 8×16 */
+void LCD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t fg, uint16_t bg); /* 画字符串 */
 
 /* RGB565 常用颜色 */
-#define LCD_RED    0xF800
-#define LCD_GREEN  0x07E0
-#define LCD_BLUE   0x001F
-#define LCD_WHITE  0xFFFF
-#define LCD_BLACK  0x0000
+#define LCD_BLACK   0x0000
+#define LCD_WHITE   0xFFFF
+#define LCD_RED     0xF800
+#define LCD_GREEN   0x07E0
+#define LCD_BLUE    0x001F
+#define LCD_CYAN    0x07FF    /* 青色 = 绿+蓝 */
+#define LCD_MAGENTA 0xF81F    /* 品红 = 红+蓝 */
+#define LCD_YELLOW  0xFFE0    /* 黄色 = 红+绿 */
 
 #endif /* __BSP_LCD_H */
