@@ -66,5 +66,6 @@ void LCD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t fg, uint16
 #define LCD_CYAN    0x07FF    /* 青色 = 绿+蓝 */
 #define LCD_MAGENTA 0xF81F    /* 品红 = 红+蓝 */
 #define LCD_YELLOW  0xFFE0    /* 黄色 = 红+绿 */
+#define LCD_GRAY    0x8410    /* 中灰（R16 G32 B16），用于次要信息如版本行 */
 
 #endif /* __BSP_LCD_H */

@@ -43,6 +43,28 @@ typedef struct {
     uint8_t  pressed;    /* 1=按下 / 0=松开 */
 } TouchPoint;
 
+/* ---------------------------- 调试 / 校准观察量 ---------------------------- */
+/* 最近一次读取的 12bit ADC 原始值（未经 map_to_screen 映射）。
+   用途：
+   1) 四角校准 —— 记录屏四个角按下时的 raw 值，即可反推真实映射范围；
+   2) 排查 —— 判断读数是否恒为 0 / 饱和到 4095（接线或时序问题）。
+   注意：仅当 Touch_Read() 判定 pressed=1 时才会刷新。 */
+extern volatile uint16_t touch_raw_x;
+extern volatile uint16_t touch_raw_y;
+
+/* 开机以来见过的 raw 极值（自动累积，用于一次性测出真实量程）。
+   在屏上把四角都按一遍，读 *_min / *_max 即可得到真实映射区间：
+     XPT_MIN_X ← touch_raw_x_min + 余量，XPT_MAX_X ← touch_raw_x_max - 余量
+   若 max 明显小于 4095（例如只有 1800），说明读数本身没到全量程 = 时序问题，
+   此时调校准值是治不了的。 */
+extern volatile uint16_t touch_raw_x_min;
+extern volatile uint16_t touch_raw_x_max;
+extern volatile uint16_t touch_raw_y_min;
+extern volatile uint16_t touch_raw_y_max;
+
+/* 清零极值记录（重新测一轮时调用） */
+void       Touch_ResetRange(void);
+
 /* ---------------------------- 函数声明 ---------------------------- */
 void       Touch_Init(void);                    /* GPIO 初始化 */
 TouchPoint Touch_Read(void);                     /* 读触摸点（含去抖，返回屏幕坐标） */

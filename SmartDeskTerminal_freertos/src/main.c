@@ -25,6 +25,13 @@
 #include "bsp/lcd.h"
 #include "bsp/touch.h"
 
+/* ---------------------------- 固件版本标识 ---------------------------- */
+/* FW_VERSION：手工维护，有实质功能改动就递增（人可能忘，所以它只是辅助）。
+   __DATE__ / __TIME__：编译器自动填充，**每次重新编译必然变化** ——
+   这才是判断"手上跑的是不是最新固件"的可靠依据（防烧错/烧旧）。
+   两者都会显示在屏幕顶部，烧录后一眼可核对。 */
+#define FW_VERSION  "v0.7.1"
+
 /* ---------------------------- 全局变量 ---------------------------- */
 /* 按键当前状态：1 = 松开（上拉高电平）/ 0 = 按下（PC1 接 GND）。
    加 volatile 是为了让调试器能读到主循环里的最新值，不被编译器优化掉。 */
@@ -66,19 +73,31 @@ int main(void)
     LCD_ST7789_Init();
     Touch_Init();
 
-    /* 界面：黑底标题 + 信息行 */
+    /* 界面：黑底标题 + 版本标识 + 信息行 */
     LCD_FillScreen(LCD_BLACK);
-    LCD_DrawString(8,  10, "Hello SmartDesk",       LCD_WHITE,  LCD_BLACK);
-    LCD_DrawString(8,  40, "LCD: ST7789V 240x320",  LCD_GREEN,  LCD_BLACK);
-    LCD_DrawString(8,  60, "Touch: XPT2046 RTP",    LCD_GREEN,  LCD_BLACK);
+    LCD_DrawString(8,  10, "SmartDesk " FW_VERSION, LCD_WHITE, LCD_BLACK);
+    /* 编译时间：编译器自动填充，每次重编译必然变化 ——
+       烧录后先看这一行，就能确认手上跑的是不是最新构建 */
+    LCD_DrawString(8,  30, "Build " __DATE__ " " __TIME__, LCD_GRAY, LCD_BLACK);
+    LCD_DrawString(8,  50, "LCD: ST7789V 240x320",  LCD_GREEN,  LCD_BLACK);
+    LCD_DrawString(8,  70, "Touch: XPT2046 RTP",    LCD_GREEN,  LCD_BLACK);
 
-    /* SYSCLK 数值 */
+    /* SYSCLK 数值：先拼成一整行再一次性画。
+       ⚠️ 别拆成多段续画 —— 每段的 x 必须按"已画字符数×8"递增，算错就会互相覆盖
+       （旧版把 " Hz" 的 x 写成与数字相同的 64，屏上显示成 "SYSCLK: Hz000000"）。 */
     {
-        char buf[24];
-        int_to_str(SystemCoreClock, buf);
-        LCD_DrawString(8,  80, "SYSCLK:", LCD_CYAN, LCD_BLACK);
-        LCD_DrawString(8 + 8*7, 80, buf, LCD_CYAN, LCD_BLACK);
-        LCD_DrawString(8 + 8*7, 80, " Hz", LCD_CYAN, LCD_BLACK);
+        char line[32];
+        int k = 0;
+        const char *pfx = "SYSCLK: ";
+        const char *sfx = " Hz";
+
+        for (int m = 0; pfx[m]; m++) line[k++] = pfx[m];   /* "SYSCLK: " */
+        int_to_str(SystemCoreClock, line + k);             /* 追数字      */
+        while (line[k]) k++;                               /* 移到数字末尾 */
+        for (int m = 0; sfx[m]; m++) line[k++] = sfx[m];   /* " Hz"       */
+        line[k] = 0;
+
+        LCD_DrawString(8, 90, line, LCD_CYAN, LCD_BLACK);
     }
 
     /* 画触摸按钮（绿底白字）—— 画矩形 + 写字 */
@@ -97,7 +116,7 @@ int main(void)
     LCD_DrawString(8, 170, "Hits:",  LCD_YELLOW, LCD_BLACK);
 
     spi_test_done = 1;
-    uint8_t last_pressed = 0;
+    uint8_t hit_latched = 0;   /* 锁存标志：一次按压只触发一次按钮 */
     char numbuf[12];
 
     while (1)
@@ -119,13 +138,24 @@ int main(void)
         LCD_DrawString(8 + 8*6 + 8*7, 150, "      ", LCD_BLACK, LCD_BLACK);
         if (tp.pressed) LCD_DrawString(8 + 8*6 + 8*7, 150, numbuf, LCD_WHITE, LCD_BLACK);
 
-        /* 按钮 hit-test（边沿检测：仅"刚按下"触发） */
-        if (tp.pressed && !last_pressed)
+        /* 当前触点是否落在按钮矩形内（供 hit-test 与诊断行共用） */
+        uint8_t in_btn = (tp.pressed &&
+                          tp.x >= BTN_X && tp.x < BTN_X + BTN_W &&
+                          tp.y >= BTN_Y && tp.y < BTN_Y + BTN_H) ? 1u : 0u;
+
+        /* 按钮触发：锁存式（一次按压只算一次）
+           ⚠️ 不要用"按下瞬间那一帧"判定 —— 按下第一帧的坐标最容易失准
+           （XPT2046 首次转换未稳 + 手指刚接触时受压面积还在变）。一旦这一帧
+           偏出按钮区，边沿检测就把唯一的机会用掉了：之后手指稳稳按在按钮上、
+           坐标也回到区内，却永远不会再触发，表现就是"按了没反应"。
+           锁存式：一次按压期间只要有一帧落在按钮区内就触发，松开才解锁。 */
+        if (tp.pressed)
         {
-            if (tp.x >= BTN_X && tp.x < BTN_X + BTN_W &&
-                tp.y >= BTN_Y && tp.y < BTN_Y + BTN_H)
+            if (!hit_latched && in_btn)
             {
+                hit_latched = 1;   /* 锁定：按住期间不重复计数 */
                 button_hit_count++;
+
                 /* 闪红反馈 */
                 uint16_t by;
                 for (by = BTN_Y; by < BTN_Y + BTN_H; by++)
@@ -146,12 +176,20 @@ int main(void)
                 LCD_DrawString(BTN_X + 16, BTN_Y + 12, "PRESS ME", LCD_WHITE, LCD_GREEN);
             }
         }
-        last_pressed = tp.pressed;
+        else
+        {
+            hit_latched = 0;       /* 松开解锁，允许下一次触发 */
+        }
 
         /* Hits 计数 */
         int_to_str(button_hit_count, numbuf);
         LCD_DrawString(8 + 8*6, 170, "    ", LCD_BLACK, LCD_BLACK);
         LCD_DrawString(8 + 8*6, 170, numbuf, LCD_YELLOW, LCD_BLACK);
+
+        /* 触摸调试诊断显示（y=260 的 raw 极值行、y=280 的 P/IN-OUT 行）
+           已于 2026-09-22 排查结束后移除，屏面恢复干净。
+           若日后需要重新校准或排查，可临时恢复显示，数据源仍在
+           touch.c 的 touch_raw_x/y_min/max（说明见 touch.h）。 */
 
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_0);
         HAL_Delay(50);

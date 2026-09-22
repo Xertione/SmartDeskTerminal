@@ -8,13 +8,36 @@
 #include "bsp/touch.h"
 
 /* ---------------------------- 触摸校准值 ---------------------------- */
-/* XPT2046 12bit ADC 值 → 屏幕坐标的映射。
-   实际值需触摸屏四角校准后确定，这里先给经验值，后续校准再调。
-   屏 240×320，XPT2046 典型范围：X 约 300~3900，Y 约 200~3800。 */
-#define XPT_MIN_X   300
-#define XPT_MAX_X   3900
+/* XPT2046 12bit ADC 值 → 屏幕坐标的映射区间。
+   **固定值**：运行时不改动，不做任何"自适应校准"（不该要求用户上电点四角）。
+   X 来源：**双读法对比实测**确认改用"补 1 个时钟"的读法后，X 实测 200~3800
+           （正是 2.8" 电阻屏的典型量程）。
+   Y 来源：暂沿用同一典型范围，待用户按遍四角后以实测值替换。
+   ⚠️ 本组值绑定"补 1 个时钟"的读法（见 touch_read_raw）。
+      历史上曾用不补时钟的读法，那时量程只有一半（190~1845），已废弃。 */
+#define XPT_MIN_X   200
+#define XPT_MAX_X   3800
 #define XPT_MIN_Y   200
 #define XPT_MAX_Y   3800
+
+/* 最近一次 ADC 原始值（供校准 / 调试观察，见 touch.h 说明） */
+volatile uint16_t touch_raw_x = 0;
+volatile uint16_t touch_raw_y = 0;
+
+/* 开机以来的 raw 极值（自动累积），用于一次性测出真实量程 */
+volatile uint16_t touch_raw_x_min = 4095;
+volatile uint16_t touch_raw_x_max = 0;
+volatile uint16_t touch_raw_y_min = 4095;
+volatile uint16_t touch_raw_y_max = 0;
+
+/* 清零极值记录（重新测一轮时调用） */
+void Touch_ResetRange(void)
+{
+    touch_raw_x_min = 4095;
+    touch_raw_x_max = 0;
+    touch_raw_y_min = 4095;
+    touch_raw_y_max = 0;
+}
 
 /* ---------------------------- 软件延时（SCK 脉冲宽度） ---------------------------- */
 /* XPT2046 时钟最高 2.5MHz，软件 GPIO 翻转够慢，不需精确延时。
@@ -69,10 +92,16 @@ void Touch_Init(void)
 
 /**
   * @brief  读 XPT2046 一个通道的 12bit 原始 ADC 值
-  * @param  ctrl  控制字节：0xD0=X通道, 0x90=Y通道
-  * @retval 12bit 原始值 (0~4095)
+  * @param  ctrl         控制字节：0xD0 = X 通道, 0x90 = Y 通道
+  * @param  skip_clocks  控制字发完后补发的时钟数
+  *                      0 = 控制字后直接读（少读一位，数值只有一半）
+  *                      1 = 先过一个"转换/BUSY"时钟再读（**正确读法**）
+  * @retval 12bit 原始值
+  * @note   2026-09-22 双读法对比实测结论：skip=0 时 X 得 100~1872，
+  *         skip=1 时 X 得 200~3800（恰为前者的 2 倍，且符合 2.8" 屏典型量程）
+  *         → 采用 skip=1。参数保留是为了记录这段结论、便于日后复现对比。
   */
-static uint16_t touch_read_raw(uint8_t ctrl)
+static uint16_t touch_read_raw_ex(uint8_t ctrl, uint8_t skip_clocks)
 {
     uint16_t value = 0;
 
@@ -90,8 +119,16 @@ static uint16_t touch_read_raw(uint8_t ctrl)
         t_clk_low();
     }
 
-    /* 读 12bit 数据（XPT2046 在最后一个时钟后开始输出） */
-    touch_delay();  /* 转换所需 1 个额外时钟，已在上面 */
+    /* 可选：补发若干个时钟（用于验证是否有多余位） */
+    for (uint8_t k = 0; k < skip_clocks; k++)
+    {
+        t_clk_high();
+        touch_delay();
+        t_clk_low();
+        touch_delay();
+    }
+
+    /* 读 12bit 数据（MSB 先出） */
     for (int i = 11; i >= 0; i--)
     {
         t_clk_high();
@@ -103,6 +140,16 @@ static uint16_t touch_read_raw(uint8_t ctrl)
 
     t_cs_high();
     return value;
+}
+
+/* 工作读法：控制字后先补 1 个"转换/BUSY"时钟，再读 12 位数据。
+   —— 2026-09-22 用双读法对比实测确认的结论：
+        A（不补时钟）= X 100~1872   ← 数值只有一半，且最小值也偏小
+        B（补 1 个时钟）= X 200~3800  ← 正好是 A 的 2 倍
+      且 200~3800 正是 2.8" 电阻屏的典型量程 → 确认 B 正确、A 少读了一位。 */
+static uint16_t touch_read_raw(uint8_t ctrl)
+{
+    return touch_read_raw_ex(ctrl, 1);
 }
 
 /**
@@ -150,9 +197,23 @@ TouchPoint Touch_Read(void)
     int ydiff = (y1 > y2) ? (y1 - y2) : (y2 - y1);
     if (xdiff > 200 || ydiff > 200) return p;  /* 抖动 */
 
-    /* 映射到屏幕坐标 */
-    p.x = map_to_screen((x1 + x2) / 2, XPT_MIN_X, XPT_MAX_X, 239);
-    p.y = map_to_screen((y1 + y2) / 2, XPT_MIN_Y, XPT_MAX_Y, 319);
+    /* 记录原始值（校准 / 调试观察用），再做映射 */
+    uint16_t rawx = (uint16_t)((x1 + x2) / 2);
+    uint16_t rawy = (uint16_t)((y1 + y2) / 2);
+    touch_raw_x = rawx;
+    touch_raw_y = rawy;
+
+    /* 累积极值：在屏上按遍四角即可得到真实量程 */
+    if (rawx < touch_raw_x_min) touch_raw_x_min = rawx;
+    if (rawx > touch_raw_x_max) touch_raw_x_max = rawx;
+    if (rawy < touch_raw_y_min) touch_raw_y_min = rawy;
+    if (rawy > touch_raw_y_max) touch_raw_y_max = rawy;
+
+    /* 映射到屏幕坐标：使用文件头的固定校准区间。
+       不做运行时"自适应校准" —— 产品不该要求用户每次上电先点四个角；
+       区间靠一次性实测确定后写死。 */
+    p.x = map_to_screen(rawx, XPT_MIN_X, XPT_MAX_X, 239);
+    p.y = map_to_screen(rawy, XPT_MIN_Y, XPT_MAX_Y, 319);
     p.pressed = 1;
     return p;
 }
