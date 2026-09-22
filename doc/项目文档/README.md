@@ -4,7 +4,9 @@
 
 ## 项目状态
 
-Phase 1 已收尾（编译/烧录/运行全通），进 Phase 2。详见 [progress.md](progress.md)。
+**Phase 5（LCD）+ Phase 7（触摸）已完成实机验证** —— 裸机 UI 可用：文字渲染 + 触摸按钮（可点中、带计数）+ 实时坐标 + 屏上固件版本标识。
+
+下一个要做的：**Phase 3 FreeRTOS**。详见 [progress.md](progress.md)。
 
 ## 快速开始
 
@@ -33,6 +35,14 @@ pio run -t upload    # 烧录到板子（ST-Link）
 - `doc/datasheets_md/` —— 翻译整理的精简版数据手册（11 个 md，repo 跟踪）
 - `doc/核心板资料/` + `doc/屏幕资料/` —— 原厂完整资料（PDF/例程源码/工具，**磁盘保留但 repo 不跟踪**，见 ADR-007）
 
-## 项目规划
+## 项目文档导航（`doc/项目文档/`）
 
-总规划见 [plan.md](plan.md)（同目录，10 个 Phase）。
+| 文件 | 用途 |
+|---|---|
+| [progress.md](progress.md) | **当前进度（以它为准）** |
+| [plan.md](plan.md) | 10 个 Phase 的目标与产物 |
+| [decision-log.md](decision-log.md) | 为什么这样选而不是那样选（ADR） |
+| [troubleshooting.md](troubleshooting.md) | 已踩的坑（T-NNN） |
+| [wiring.md](wiring.md) | **物理接线施工单**（拿着杜邦线照着插） |
+| [debug-manual.md](debug-manual.md) | SWD 调试与自助烧录 |
+| [AGENTS.md](AGENTS.md) | AI 协作规范 + 文档更新规则 + 提交前检查清单 |

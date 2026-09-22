@@ -4,6 +4,14 @@
 
 总体开发路线
 
+⚠️ 实际执行顺序已按 ADR-009 / ADR-010 调整，与下方 Phase 编号顺序不同：
+
+    1 → 2 → 5(LCD) → 7(触摸) → 3(FreeRTOS) → 4(任务通信) → 6(LVGL) → 8(USB CDC) → 9(PC Agent) → 10(整合)
+
+其中 Phase 5 / Phase 7 已于 2026-09-22 完成（裸机）。下一个要做的 = **Phase 3**。
+
+本文件只描述各 Phase 的目标与产物；**当前进度以 `progress.md` 为准**。
+
 最终工程：
 
 SmartDeskTerminal
@@ -260,7 +268,9 @@ Phase 7：触摸与交互系统
 
 加入：
 
-FT6336U
+XPT2046（电阻触摸，SPI 软件时序）
+     ↑ 原规划写的是 FT6336U（电容触摸，I2C），与实际屏（CL28CK230-18A，电阻触摸）
+       不符。已按实物更正，见 ADR-009。
 
 完成：
 
@@ -271,7 +281,8 @@ FT6336U
 
 学习：
 
-I2C
+SPI 主机模式 + 控制字 / 读位时序
+     （原写 I2C —— 那是 FT6336U 的接口；XPT2046 走 SPI，已于 2026-09-22 完成驱动）
 Touch Driver
 LVGL Input Device
 Phase 8：USB CDC通信链路
