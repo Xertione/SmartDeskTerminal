@@ -17,6 +17,10 @@
 **/*.map
 **/*.list
 
+# FreeRTOS-Kernel（ADR-012：用 PIO lib_deps 管理，在 .pio/libdeps/ 下）
+# lib/ 下的 clone 残留不入库
+SmartDeskTerminal_freertos/lib/
+
 # 原厂硬件资料体积大（6000+文件/581M），磁盘保留但不入 repo
 # 精简版整理见 doc/datasheets_md/（11 个 md）
 doc/核心板资料/
