@@ -163,3 +163,24 @@
   - **后续触发**：Phase 6 LVGL 触摸输入若需更高精度 → 实测 Y 轴范围替换 `XPT_MIN_Y/MAX_Y`
 
 > 做下一个取舍时在下方追加，格式同上（**每条必须写"后果"段**）。
+
+## ADR-012：FreeRTOS 集成方案（PIO lib_deps + ARM_CM4F + 接受现有代码改）
+
+- 日期：2026-09-22
+- 背景：FreeRTOS 集成有三个方案（clone GitHub / PIO lib_deps / 手写最小文件集），FPU 有两个方案（ARM_CM3 无 FPU / ARM_CM4F 有 FPU）。AI 未经决策直接 clone + 用 ARM_CM3 一步到位写完三任务，违反协作规则（方案未商量 + 无学习空间）。用户复盘后定方案。
+- 决定：
+  1. **集成方式**：PIO lib_deps（方案 B），不用 clone 的 GitHub 仓库
+  2. **移植层**：ARM_CM4F（用 FPU，方案 B），不用 ARM_CM3
+  3. **现有代码**：接受，在此基础上改（删 clone 仓库，换 lib_deps + CM4F，解决 FPU 链接问题）
+  4. **执行模式**：一步到位（用户明确，不分步）
+- 原因：
+  1. lib_deps 最省事，PIO 管版本，不污染 repo（clone 的内嵌 git 是麻烦）
+  2. F407 有 FPU 该用，ARM_CM4F 是正确的移植层
+  3. 现有 main.c 三任务架构可复用，只改集成层
+- 后果：
+  - **优点**：PIO 管理依赖，repo 干净；FPU 性能不浪费；代码复用不浪费
+  - **代价（关键风险）**：
+    1. ARM_CM4F 的 FPU ABI 冲突需解决——之前 build_unflags 没解决链接问题，可能要改 ldscript 或用 extra_script
+    2. PIO lib_deps 的 FreeRTOS 包版本/质量需验证（PIO 注册表可能不是官方最新）
+    3. 原有 clone 仓库要删除（git rm）+ .gitignore 防止重新 clone
+  - **后续触发**：如果 ARM_CM4F FPU 链接问题仍无法解决（试完 extra_script 后），回退到 ARM_CM3（ADR-001 预言的退路）
