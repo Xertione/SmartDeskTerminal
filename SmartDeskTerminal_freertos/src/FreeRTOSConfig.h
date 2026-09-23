@@ -61,17 +61,29 @@ extern "C" {
  * 意味着：优先级数值 5~15 的中断可以调 FreeRTOS API，0~4 不行。
  * ----------------------------------------------------------- */
 #define configPRIO_BITS                 4    /* F407 用 4 位抢占优先级 */
-#define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 15  /* 最低优先级 */
-#define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5  /* 可调 API 的最低优先级 */
-#define configKERNEL_INTERRUPT_PRIORITY         configLIBRARY_LOWEST_INTERRUPT_PRIORITY
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY  configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY
-
-/* -----------------------------------------------------------
- * 时钟与 PendSV/SVC（ADR-001 坑 4：中断优先级）
- * xPortSysTickHandler / xPortPendSVHandler / vPortSVCHandler
- * 的优先级由 port.c 自动设，这里只声明映射
+/* ⚠️⚠️ 必须左移 (8 - configPRIO_BITS) = 4 位！⚠️⚠️
+ *
+ * STM32 的 NVIC 优先级寄存器是 8 位，但只实现高 4 位（bit7:4），
+ * 低 4 位丢弃。所以写「优先级 15」必须写成 0xF0，不能写 0x0F：
+ *   写 0x0F → 实现位 = 0x0F >> 4 = 0  → 实际优先级 **0（最高）**
+ *   写 0xF0 → 实现位 = 0xF0 >> 4 = 15 → 实际优先级 15（最低）
+ *
+ * 这两个宏都是**直接写进硬件寄存器**的值，不是"优先级编号"：
+ *   configKERNEL_INTERRUPT_PRIORITY → port.c 写进 SHPR3（PendSV/SysTick 优先级）
+ *   configMAX_SYSCALL_INTERRUPT_PRIORITY → 写进 BASEPRI（临界区屏蔽阈值）
+ *
+ * 历史坑（2026-09-23 修复）：此前写成未左移的 15 / 5，后果是
+ *   ① PendSV 与 SysTick 落到**最高优先级 0**，违背"内核中断必须最低"的铁律；
+ *   ② BASEPRI = 5 只能屏蔽 1~15，屏蔽不掉优先级 0 →
+ *      **临界区挡不住 PendSV/SysTick**，内核链表可能被中断中途改写。
+ * 反汇编证据：vPortEnterCritical 里是 `mov.w r3, #5; msr BASEPRI, r3`。
  * ----------------------------------------------------------- */
-#define configKERNEL_INTERRUPT_PRIORITY         configLIBRARY_LOWEST_INTERRUPT_PRIORITY
+#define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 15  /* 最低优先级（编号） */
+#define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5  /* 可调 API 的最低优先级（编号） */
+#define configKERNEL_INTERRUPT_PRIORITY \
+    ( configLIBRARY_LOWEST_INTERRUPT_PRIORITY << ( 8 - configPRIO_BITS ) )        /* = 0xF0 */
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY \
+    ( configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << ( 8 - configPRIO_BITS ) )   /* = 0x50 */
 
 /* -----------------------------------------------------------
  * 可选 API
@@ -99,6 +111,21 @@ extern "C" {
 #define INCLUDE_xTimerPendFunctionCall 1
 #define INCLUDE_uxTaskGetStackHighWaterMark 1
 #define INCLUDE_xTaskGetCurrentTaskHandle 1
+
+/* -----------------------------------------------------------
+ * 断言（ASSERT）：让 FreeRTOS 内部的配置/参数检查变得可见
+ * -----------------------------------------------------------
+ * 不定义 configASSERT 时，它在 FreeRTOS.h 里是个**空宏**：
+ * 所有 configASSERT(...) 检查全部失效，配置写错（优先级分组不符、
+ * 队列参数非法、API 用法不当）都会**完全静默**，只表现为
+ * "任务不跑 / 卡死"而没有任何提示 —— 极难排查。
+ *
+ * 这里接一个在**屏幕**上报错的钩子（本板 PC0 LED 是坏件，只能靠屏）：
+ * 断言失败时屏上显示红底白字 + 断言所在行号。
+ * 实现见 main.c 的 vApplicationAssertFailed()。
+ * ----------------------------------------------------------- */
+void vApplicationAssertFailed(const char *file, int line);
+#define configASSERT( x )    if( ( x ) == 0 ) vApplicationAssertFailed( __FILE__, __LINE__ )
 
 /* -----------------------------------------------------------
  * FreeRTOS 与 HAL 的 SysTick 共存
