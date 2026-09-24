@@ -208,3 +208,29 @@
     3. `touch.c` 从此依赖 FreeRTOS（vTaskDelay），不能在调度器启动前调用 `Touch_Read`
     4. 编译文件数 299（原 ~120），全量编译 ~36s；字号/控件全在 `src/lv_conf.h` 裁剪，加控件要记得改配置
   - **后续触发**：实机若花屏 → 先降 SPI 到 /8；若 RAM 吃紧 → 缩缓冲；Phase 9 需要中文 → 开 `LV_FONT_SIMSUN_16_CJK`（约 170KB Flash，预算内）
+
+## ADR-014：Phase 8 USB CDC 集成（HAL USB Device + 库文件复制 + 双向+命令雏形）
+
+- 日期：2026-09-25
+- 背景：Phase 8 USB CDC，三个决策点（用户全选推荐）：USB 线材（有数据线）、协议栈（HAL USB Device）、应用范围（双向+命令雏形）。F407VET6 有 OTG_FS（PA11/PA12 直连 Type-C），PLLQ=7→48MHz 在 ADR-003 已提前配好。
+- 决定：
+  1. **协议栈**：STM32 官方 USB Device Library（HAL 路线一致）
+  2. **集成方式**：复制 CDC+Core 中间件 4 个 .c + 头文件到 `lib/usb_device/`（PIO 默认不编 Middleware，复制最干净）
+  3. **应用范围**：双向通道 + 命令解析（hello/version/hits/clear/ping/help），直接做到 Agent 雏形
+  4. **任务架构**：Task_LVGL(prio3) + Task_Agent(prio2)；Agent 不直接碰 UI，走队列中转（LVGL 非线程安全）
+  5. **队列回归**：Phase 6 退役的队列在此重启（Agent→UI 消息通道）
+  6. **USB 中断优先级**：6（≥5 可调 RTOS API，保守做法）
+- 原因：
+  1. HAL USB Device 与项目路线一致，资料最全
+  2. 复制中间件比 extra_script 配置简单，离线可编，repo 干净（只加 11 个文件）
+  3. 双向+命令雏形为 Phase 9 Agent 打好地基，只剩协议升级
+  4. LVGL 非线程安全 → Agent 改 UI 必须走队列中转（LVGL 官方推荐多任务用法）
+- 后果：
+  - **优点**：printf 通道终于通了（USB_CDC_Printf 替代被跳过的 UART printf，ADR-008 间接解决）；PC 端能发命令到板子（Phase 9 地基）；RAM 50.9%（66.7KB）Flash 26.2%（137.5KB）都有余量
+  - **代价（关键风险）**：
+    1. **RAM 已用过半**——Phase 9 Agent + Phase 10 整合若再吃 20KB 就逼近上限，届时缩绘制缓冲或砍 LVGL 池
+    2. USB CDC VID=1234/PID=5678 是 ST 测试值，正式产品需替换 + INF 驱动
+    3. CDC 接收环形缓冲 256 字节，超长命令（>64B 单包）会被截断
+    4. USB 中断优先级 6 与 FreeRTOS 临界区（BASEPRI=5）兼容，但 USB 中断里不能调 RTOS API（当前没调，安全）
+    5. **safe-delete 表现④（新发现）**：PIO 启动时反复尝试清理 .sconsign 改名残留文件，全部被 REJECTED → SCons 无法初始化数据库 → 跳过构建报假 SUCCESS。绕过方法：换新 build_dir。
+  - **后续触发**：Phase 9 需要更丰富命令协议 → 扩展 cmd.c；PC Agent 需要结构化数据 → 改 CDC 传输格式

@@ -28,6 +28,7 @@
 #include "bsp/key.h"
 #include "bsp/lcd.h"
 #include "bsp/touch.h"
+#include "bsp/usb_cdc.h"
 
 /* FreeRTOS */
 #include "FreeRTOS.h"
@@ -37,6 +38,14 @@
 #include "lvgl.h"
 #include "lvgl_port.h"
 #include "ui.h"
+
+/* Agent ↔ UI 队列 */
+#include "agent_msg.h"
+
+/* 固件版本（cmd.c 也有同名宏，编译期分别独立定义但内容一致） */
+#define FW_VERSION  "v0.9.1-cdc"
+
+/* Phase 8 USB CDC：触发重编标记 */
 
 /* ---------------------------- 全局变量（供 SWD 监视） ---------------------------- */
 volatile uint8_t  spi_test_done = 0;   /* LCD 就绪标志（错误路径画屏前必须检查） */
@@ -56,6 +65,7 @@ static void int_to_str(uint32_t val, char *buf);
 static void u32_to_hex(uint32_t v, char *buf);
 static uint8_t ram_ok(uint32_t a);
 static void Task_LVGL(void *arg);
+static void Task_Agent(void *arg);
 
 /* ====================================================================== */
 /*                              主程序入口                                 */
@@ -77,10 +87,20 @@ int main(void)
 
     spi_test_done = 1;                  /* LCD 就绪：错误路径可以画屏了 */
 
-    /* 单任务架构：LVGL 全部逻辑跑在一个任务里（串行化 SPI 天然成立）。
-       栈 768 字 = 3KB：lv_timer_handler 渲染路径 + flush 调用链，
-       后续用 uxTaskGetStackHighWaterMark 验证余量。 */
-    if (xTaskCreate(Task_LVGL, "LVGL", 768, NULL, 3, NULL) != pdPASS)
+    /* Agent ↔ UI 队列（队列回归，Phase 8 重启） */
+    agent_queue_init();
+
+    /* USB CDC 初始化（在调度器启动前 —— USB 中断自己工作，不需要 RTOS） */
+    USB_CDC_Init();
+
+    /* 任务架构：
+       Task_LVGL(prio 3, 栈 768字)：LVGL 渲染 + lv_timer_handler + 收 Agent 队列
+       Task_Agent(prio 2, 栈 384字)：USB CDC 轮询 + 命令解析 + 发 Agent 队列
+       ⚠️ LVGL 非线程安全：所有 LVGL API 只能在 Task_LVGL 里调（包括 Agent 命令
+          要改 UI 的，必须走队列中转，绝不能让 Task_Agent 直接碰控件）。 */
+    if (xTaskCreate(Task_LVGL,  "LVGL",  768, NULL, 3, NULL) != pdPASS)
+        Error_Handler();
+    if (xTaskCreate(Task_Agent, "Agent", 384, NULL, 2, NULL) != pdPASS)
         Error_Handler();
 
     /* 启动调度器。正常情况下此函数永不返回。 */
@@ -111,7 +131,29 @@ static void Task_LVGL(void *arg)
     while (1)
     {
         lv_timer_handler();                  /* 跑到期的所有 timer */
+        ui_poll_agent();                     /* 收 Agent 队列消息并应用（无消息立即返回） */
         vTaskDelay(pdMS_TO_TICKS(5));        /* 睡 5ms，不吃满 CPU */
+    }
+}
+
+/**
+  * @brief  Task_Agent：USB CDC 轮询 + 命令解析
+  * @note   不直接碰 UI —— 改 UI 的命令通过 agent_msg 队列转给 Task_LVGL。
+  *         USB 设备枚举可能慢（PC 端识别 COM 口需 1~2 秒），这里轮询始终跑，
+  *         USB 未就绪时 USB_CDC_Printf 内部静默丢弃，不阻塞。
+  */
+static void Task_Agent(void *arg)
+{
+    (void)arg;
+
+    /* 启动欢迎语（USB 枚举成功后 PC 端会收到） */
+    USB_CDC_Printf("SmartDesk " FW_VERSION " ready\r\n");
+    USB_CDC_Printf("Type 'help' for commands\r\n");
+
+    while (1)
+    {
+        USB_CDC_Poll();
+        vTaskDelay(pdMS_TO_TICKS(20));   /* 20ms 轮询，足够响应键入 */
     }
 }
 

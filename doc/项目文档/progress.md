@@ -3,8 +3,8 @@
 > 维护语义：**覆盖**。永远只反映当前状态，过期内容直接删掉，不往下堆历史。
 > 历史决策看 `decision-log.md`，已踩的坑看 `troubleshooting.md`。
 
-- 当前阶段：**Phase 6 LVGL 移植代码完成，待实机验证**
-- 状态：编译 SUCCESS（RAM 47.3% / Flash 24.0%）；LVGL 8.3.11 + 单任务架构就绪
+- 当前阶段：**Phase 8 USB CDC 代码完成，待实机验证**
+- 状态：编译 SUCCESS（RAM 50.9% / Flash 26.2%）；USB CDC 双向通道 + 命令解析就绪
 - 最后更新：2026-09-25
 
 ---
@@ -41,7 +41,18 @@
 - [x] **中断优先级宏未左移导致"启动第一个任务即 HardFault"—— 已定位并修复，见 T-002**
 - [x] 实机验证：烧录后三任务正常调度（LED 心跳 / 触摸 / 屏幕刷新）
 
-### Phase 6：LVGL 移植（代码完成，待实机验证，ADR-013）
+### Phase 8：USB CDC 双向通道 + 命令雏形（代码完成，待实机验证，ADR-014）
+- [x] 集成：复制 USB Device Library CDC+Core 中间件到 `lib/usb_device/`（library.json 限制只编 CDC+Core）
+- [x] 用户层：`lib/usb_device/{usbd_conf,usbd_desc,usbd_cdc_if}.{c,h}`（HAL 钩子 + 描述符 + CDC 接口）
+- [x] 顶层接口 `src/bsp/usb_cdc.{c,h}`：`USB_CDC_Init/Send/Printf/Poll/IsConfigured`
+- [x] 命令解析 `src/cmd.{c,h}`：hello/version/hits/clear/ping/help（行式文本，\r\n 结尾）
+- [x] Agent↔UI 队列 `src/agent_msg.{c,h}`：队列回归（Phase 6 退役的队列在此重启）
+- [x] 任务架构：Task_LVGL(prio3) + Task_Agent(prio2)；Agent 不直接碰 UI，走队列中转
+- [x] USB 中断优先级 6（≥5 可调 RTOS API，保守做法）
+- [x] 编译 SUCCESS：RAM 50.9%（66.7KB）/ Flash 26.2%（137.5KB）/ 0 错误 1 警告(unused,已修)
+- [ ] **待办：实机烧录验证**（验收标准见下方）
+
+### Phase 6：LVGL 移植 ✅ 实机验证通过（2026-09-25，ADR-013）
 - [x] 集成：`lib_deps = lvgl/lvgl@8.3.11` + `-DLV_CONF_INCLUDE_SIMPLE` + `src/lv_conf.h`
 - [x] 内存：LVGL 静态池 32KB + 绘制缓冲 240×40（1/8 屏）；时基 LV_TICK_CUSTOM 挂 FreeRTOS tick
 - [x] 移植层 `src/lvgl_port.c|h`：flush_cb→`LCD_WriteArea`（新块写函数）+ read_cb→`Touch_Read`
@@ -49,7 +60,7 @@
 - [x] 架构：三任务+队列 → **单任务** Task_LVGL（lv_timer_handler + 5ms sleep），队列 Phase 8 回归
 - [x] 顺带清账：SPI3 提速 /16→/4（10.5MHz）；补 `SCB->VTOR`；`Touch_Read` 忙等改 vTaskDelay；删调试打点
 - [x] 编译 SUCCESS：RAM 47.3%（62.0KB）/ Flash 24.0%（126.1KB）/ 0 警告
-- [ ] **待办：实机烧录验证**（验收标准见下方"最近一次可运行状态"）
+- [x] **实机验证通过（2026-09-25 用户确认）**：验收 5 条全过 —— 界面正常 / 按钮可按 / FPS 显示 / HB 每秒刷新 / 颜色正常（字节序 + SPI 10.5MHz 提速双双通过）
 
 ---
 
@@ -66,22 +77,23 @@
 
 ## 下一步计划
 
-1. **Phase 6 实机验证**（用户烧录，验收标准见下）
-2. Phase 8 USB CDC（顺带可解决 printf 通道；Agent 任务 + 队列回归）
-3. Phase 9 PC Agent
-4. Phase 10 MVP 整合
+1. **Phase 8 实机验证**（用户烧录 + PC 端串口工具测试，验收标准见下）
+2. Phase 9 PC Agent
+3. Phase 10 MVP 整合
 
 ---
 
 ## 最近一次可运行状态
 
 - 命令：`pio run -t upload`（在 `SmartDeskTerminal_freertos/` 下）
-- 构建：SUCCESS，0 warning，Flash **126068 B（24.0%）** / RAM **61988 B（47.3%）**
-- **实机验收标准**（Phase 6，全过才算结账）：
-  1. 屏上出现深色背景界面：`SmartDesk v0.9.0-lvgl` + Build 时间 + 环境/系统信息行
-  2. `PRESS ME` 按钮可按（按下有变色反馈），点击后 `Hits: n` 计数增长
-  3. 右下角 perf monitor 显示 FPS/CPU（30fps 左右为正常）
-  4. `FRTh` / `LVMem` / `HB` 行每秒刷新（HB 数字递增 = lv_timer 活着）
-  5. 颜色正常（无整体反相 / 无花屏 → 字节序与 SPI 提速双双通过）
-- 代码：`src/main.c` + `src/{lv_conf,lvgl_port,ui,lvgl_tick_source}.{c,h}` + `src/bsp/{key,lcd,touch}.c|h` + `src/FreeRTOSConfig.h` + `extra_script.py`
+- 构建：SUCCESS，Flash **137532 B（26.2%）** / RAM **66700 B（50.9%）**
+- **实机验收标准**（Phase 8，全过才算结账）：
+  1. 烧录后屏上 Phase 6 界面照常显示（LVGL 不受影响）
+  2. USB 数据线连核心板 Type-C 口 → PC 设备管理器出现新 COM 口（VID=1234 PID=5678）
+  3. PC 串口工具（PuTTY/Arduino 串口监视器）打开 COM 口，波特率任意（CDC 虚拟串口不限速）
+  4. 收到 `SmartDesk v0.9.1-cdc ready` + `Type 'help' for commands` 欢迎语
+  5. 键入 `hello` → 收到 `Hello SmartDesk!`；`version` → 收到版本+Build；`ping` → 收到 `pong`
+  6. 键入 `clear` → 屏上 Hits 计数归零；`hits` → 串口收到 `hits=N`
+  7. 按屏上 PRESS ME 按钮 → Hits 增长 → 键入 `hits` 确认数值同步
+- 代码：`src/main.c` + `src/{lv_conf,lvgl_port,ui,lvgl_tick_source}.{c,h}` + `src/bsp/{key,lcd,touch,usb_cdc}.c|h` + `src/{cmd,agent_msg}.{c,h}` + `lib/usb_device/` + `src/FreeRTOSConfig.h` + `extra_script.py`
 - 对应提交：（本次 commit 后回填）

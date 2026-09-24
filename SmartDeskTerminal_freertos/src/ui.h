@@ -8,6 +8,7 @@
 #ifndef __UI_H
 #define __UI_H
 
-void ui_create(void);   /* 创建全部控件 + 启动 1s 刷新定时器（lv_init/port 之后调） */
+void ui_create(void);           /* 创建全部控件 + 启动 1s 刷新定时器 */
+void ui_poll_agent(void);       /* 收 Agent 队列消息并应用到 UI（在 Task_LVGL 里调） */
 
 #endif /* __UI_H */

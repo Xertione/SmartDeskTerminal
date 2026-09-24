@@ -24,6 +24,8 @@
 
 #include "lvgl.h"
 #include "ui.h"
+#include "agent_msg.h"
+#include "bsp/usb_cdc.h"
 #include "FreeRTOS.h"
 #include "task.h"      /* xTaskGetTickCount */
 
@@ -116,4 +118,38 @@ void ui_create(void)
 
     /* 1s 刷新定时器（lv_timer = LVGL 内置软定时器） */
     lv_timer_create(info_timer_cb, 1000, NULL);
+}
+
+/* ---------------------------- Agent 队列应用 ---------------------------- */
+
+/**
+  * @brief  收 Agent 任务发来的队列消息，应用到 UI（在 Task_LVGL 上下文调）
+  * @note   必须在 Task_LVGL 里调 —— LVGL 非线程安全，只有这个任务能改控件。
+  *         Agent 任务通过 agent_send 把意图丢过来，本函数落地执行。
+  */
+void ui_poll_agent(void)
+{
+    AgentMsg msg;
+    /* 不阻塞：没消息立即返回（Task_LVGL 主循环里高频调用） */
+    while (agent_recv(&msg, 0))
+    {
+        switch (msg.type)
+        {
+        case AGENT_MSG_CLEAR_HITS:
+            hit_count = 0;
+            lv_label_set_text_fmt(label_hits, "Hits: 0");
+            break;
+
+        case AGENT_MSG_REPORT_HITS:
+            USB_CDC_Printf("hits=%lu\r\n", (unsigned long)hit_count);
+            break;
+
+        case AGENT_MSG_SHOW_TEXT:
+            /* 预留：Phase 9 Agent 推送消息到屏（暂未用到） */
+            break;
+
+        default:
+            break;
+        }
+    }
 }

@@ -125,3 +125,19 @@
   2. 第三方库的"单文件 include 槽"宏需要多条 include 时，**用包装头**，别指望库会自己带依赖。
   3. semver 前缀（`^`/`~`）在 `lib_deps` 里是**范围**不是版本号，锁定要写全。
 - 验证：修后编译 SUCCESS（RAM 47.3% / Flash 24.0%），运行时行为待实机验证后补记。
+
+### T-005（2026-09-25）：safe-delete 表现④ —— SCons 跳过构建报假 SUCCESS
+
+- Phase：8
+- 现象：`pio run` 18s 报 SUCCESS，**零 Compiling/Linking 行**，firmware.elf 0 字节或不存在
+- 根因：多次改名 `.sconsign311.dblite`（→ .zz → .zz2）触发 safe-delete 计数器累积到阈值 50。此后 PIO 每次启动都尝试清理这些改名残留，全部 `SAFE_DELETE_BULK_REJECTED` → SCons 无法初始化/写入 `.sconsign` 数据库 → 跳过所有构建步骤直接报 SUCCESS
+- 与表现①②③的区别：
+  - ① 阻塞挂起（pio 卡死无 gcc 子进程）
+  - ② 软拒绝（构建照常跑完）
+  - ③ FAIL_CLOSED 卡 elf（报 FAILED 但实际编译完成）
+  - **④ 本次：SCons 无法初始化 → 零编译零链接直接 SUCCESS（最危险：看着成功但 elf 无效）**
+- 绕过方法：在 `platformio.ini` 加 `build_dir = .pio/build_new`（新目录无历史包袱，safe-delete 不触发）。编译成功后可去掉该配置
+- 规则固化：
+  1. **不要再改名 .sconsign**——多次改名会累积 safe-delete 计数器，触发表现④
+  2. **判据升级**：不只看 SUCCESS/FAILED，必须确认日志有 Compiling/Linking 行 + elf 大小>0 + mtime 新鲜
+  3. **safe-delete 计数器是按"轮"累积的**——同一轮里反复触发文件操作会累积；换新 build_dir 是最干净的绕过
