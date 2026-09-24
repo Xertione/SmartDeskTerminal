@@ -71,8 +71,11 @@ static void LCD_GPIO_Init(void)
 
 /**
   * @brief  SPI3 外设初始化
-  * @note   SPI3 在 APB1 总线（42MHz）。BaudRate=/16 → 2.625MHz（调试慢速，后续提速）
-  *         ST7789 写时序最高 15MHz，2.6MHz 远在安全范围。
+  * @note   SPI3 在 APB1 总线（42MHz）。BaudRate=/4 → 10.5MHz（Phase 6 提速，ADR-013）
+  *         逐字节写法（Write_Data16 每像素一次调用）时曾用 /16=2.625MHz 调试；
+  *         LVGL 块写入（LCD_WriteArea 一次发一整块）对带宽敏感，提到 10.5MHz。
+  *         经 28005 转接板 + 杜邦线的信号完整性仍保守；若出现花屏/偏色，
+  *         第一怀疑对象就是这里（回退到 /8=5.25MHz 验证）。
   *         用全双工配置但只发不收（MISO 脚悬空不影响）。
   */
 void LCD_SPI_Init(void)
@@ -86,7 +89,7 @@ void LCD_SPI_Init(void)
     hspi3.Init.CLKPolarity        = SPI_POLARITY_LOW;            /* CPOL=0：空闲低 */
     hspi3.Init.CLKPhase           = SPI_PHASE_1EDGE;              /* CPHA=0：第一边沿采样 */
     hspi3.Init.NSS                = SPI_NSS_SOFT;                 /* 软件控制 CS */
-    hspi3.Init.BaudRatePrescaler  = SPI_BAUDRATEPRESCALER_16;     /* 42M/16 = 2.625MHz */
+    hspi3.Init.BaudRatePrescaler  = SPI_BAUDRATEPRESCALER_4;      /* 42M/4 = 10.5MHz（Phase 6 提速） */
     hspi3.Init.FirstBit           = SPI_FIRSTBIT_MSB;            /* 高位先发 */
     hspi3.Init.TIMode             = SPI_TIMODE_DISABLE;           /* 不用 TI 模式 */
     hspi3.Init.CRCCalculation      = SPI_CRCCALCULATION_DISABLE;   /* 不用 CRC */
@@ -172,7 +175,6 @@ void LCD_SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 /**
   * @brief  填充全屏单色
   * @note   设窗口全屏 → RAMWR(0x2C) → 连续写 240×320=76800 个像素。
-  *         2.6MHz SPI 下约 0.47s/帧，验证够用（后续可改 DMA 提速）。
   *         RAMWR 后连续写数据即可，不需要每次重发命令。
   */
 void LCD_FillScreen(uint16_t color)
@@ -184,6 +186,31 @@ void LCD_FillScreen(uint16_t color)
     {
         LCD_Write_Data16(color);
     }
+}
+
+/**
+  * @brief  ★ LVGL flush 专用：把一整块像素缓冲写入屏幕指定窗口
+  * @param  x0,y0,x1,y1  窗口边界（含端点）
+  * @param  buf          像素缓冲（RGB565 数组，长度 = (x1-x0+1)*(y1-y0+1)）
+  * @note   ⚠️ 字节序约定：本函数把 buf 当**字节流**整块发 SPI（MSB first），
+  *         要求缓冲里每个像素已经"高字节在前"。LVGL 配 LV_COLOR_16_SWAP=1
+  *         后其绘制缓冲天然满足（见 lv_conf.h 注释），零拷贝直传。
+  *         自己手搓调用时须保证同样的字节序，否则颜色错乱。
+  *         CS 只在整个块传输期间拉一次（比逐像素拉扯快一个数量级）。
+  */
+void LCD_WriteArea(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1,
+                   const uint16_t *buf)
+{
+    uint32_t len_px = (uint32_t)(x1 - x0 + 1) * (uint32_t)(y1 - y0 + 1);
+
+    LCD_SetAddrWindow(x0, y0, x1, y1);
+    LCD_Write_Cmd(0x2C);                /* RAMWR: 写 GRAM */
+
+    HAL_GPIO_WritePin(LCD_CS_PORT, LCD_CS_PIN, GPIO_PIN_RESET);   /* 选中 */
+    HAL_GPIO_WritePin(LCD_DC_PORT, LCD_DC_PIN, GPIO_PIN_SET);     /* DC=1 数据 */
+    /* 超时按最大块算：240×40×2B = 19.2KB @10.5MHz ≈ 15ms，给 100ms 余量 */
+    HAL_SPI_Transmit(&hspi3, (uint8_t *)buf, len_px * 2U, 100);
+    HAL_GPIO_WritePin(LCD_CS_PORT, LCD_CS_PIN, GPIO_PIN_SET);     /* 取消选中 */
 }
 
 /**

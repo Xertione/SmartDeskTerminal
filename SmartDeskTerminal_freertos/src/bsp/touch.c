@@ -7,6 +7,13 @@
 
 #include "bsp/touch.h"
 
+/* Phase 6 起 BSP 只在 RTOS 上下文运行（Touch_Read 由 LVGL read_cb 调用）。
+ * 去抖等待用 vTaskDelay 让出 CPU —— 原 HAL_Delay(5) 是忙等，
+ * 按住不放时每 30ms 白烧 5ms CPU（约 17%），已列入待修清单，本次顺手修掉。
+ * ⚠️ 副作用约束：Touch_Read 不再能在调度器启动前调用（vTaskDelay 会断言）。 */
+#include "FreeRTOS.h"
+#include "task.h"
+
 /* ---------------------------- 触摸校准值 ---------------------------- */
 /* XPT2046 12bit ADC 值 → 屏幕坐标的映射区间。
    **固定值**：运行时不改动，不做任何"自适应校准"（不该要求用户上电点四角）。
@@ -183,10 +190,11 @@ TouchPoint Touch_Read(void)
     if (!Touch_IsPressed()) return p;
 
     /* 读 X 和 Y（各读一次，简单实现不做多次平均）
-       连续读 2 次去抖：两次差值 > 阈值视为抖动丢弃 */
+       连续读 2 次去抖：两次差值 > 阈值视为抖动丢弃
+       （间隔 5ms 用 vTaskDelay 让出 CPU，见文件头注释） */
     uint16_t x1 = touch_read_raw(0xD0);
     uint16_t y1 = touch_read_raw(0x90);
-    HAL_Delay(5);  /* 5ms 间隔 */
+    vTaskDelay(pdMS_TO_TICKS(5));  /* 5ms 间隔（不忙等） */
     if (!Touch_IsPressed()) return p;  /* 5ms 后松开了，抖动 */
 
     uint16_t x2 = touch_read_raw(0xD0);

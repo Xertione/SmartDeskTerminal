@@ -184,3 +184,27 @@
     2. PIO lib_deps 的 FreeRTOS 包版本/质量需验证（PIO 注册表可能不是官方最新）
     3. 原有 clone 仓库要删除（git rm）+ .gitignore 防止重新 clone
   - **后续触发**：如果 ARM_CM4F FPU 链接问题仍无法解决（试完 extra_script 后），回退到 ARM_CM3（ADR-001 预言的退路）
+
+## ADR-013：Phase 6 LVGL 集成（v8.3.11 + lib_deps + 静态内存池 + 单任务架构）
+
+- 日期：2026-09-25
+- 背景：Phase 6 LVGL 移植，四个决策点（用户四项全部选推荐项）：版本、集成方式、内存布局、首步范围。RAM 128KB 是硬约束（全屏缓冲 153.6KB 放不下）。
+- 决定：
+  1. **版本**：LVGL **v8.3.11 精确锁定**（`lib_deps` 写 `@8.3.11`，不写 `^8.3.11`——`^` 会拉到 8.4.0，T-004 实测）
+  2. **集成方式**：PIO lib_deps（与 FreeRTOS 同路线，ADR-012 先例）
+  3. **内存布局**：`LV_MEM_CUSTOM=0` + 32KB 静态数组池；绘制缓冲 240×40×2B=19.2KB 单缓冲（1/8 屏分块渲染）
+  4. **架构**：**单任务**（Task_LVGL prio3/栈768字）跑 `lv_timer_handler`，官方推荐 RTOS 模式；旧三任务+队列退役（队列 Phase 8 USB Agent 回归）
+  5. 顺带三件事：SPI3 提速 /16→/4（2.625→10.5MHz）；`SCB->VTOR=FLASH_BASE` 补显式设置；`Touch_Read` 的 `HAL_Delay(5)` 忙等改 `vTaskDelay`
+- 原因：
+  1. v8.3 中文资料/教程最全，卡住时好搜；8.x API 稳定
+  2. lib_deps 保持依赖管理一致，repo 干净
+  3. 两池分离（LVGL 32K / FreeRTOS 8K）出问题好定位；单缓冲足够（LVGL 渲染期间 CPU 无事可做，双缓冲无收益）
+  4. LVGL 的 lv_timer + 事件回调天然替代"轮询任务+队列+手搓 hit-test"，强行保留三任务反而画蛇添足
+- 后果：
+  - **优点**：RAM 47.3%（62KB/128KB）Flash 24.0%（126KB/512KB）都有余量；UI 开发效率从"手搓字模+整行重画"升级到"声明式控件+脏区渲染"；`LV_USE_PERF_MONITOR=1` 右下角自带 FPS 显示，性能可见
+  - **代价（关键风险）**：
+    1. **RAM 已用近半**——Phase 8 USB CDC（栈+缓冲）+ Phase 9 Agent 若再吃 20KB+ 就逼近上限，届时优先考虑缩绘制缓冲（240×40→240×20 省 9.6KB）或砍 LVGL 池
+    2. SPI 提速到 10.5MHz 未经长时验证，**花屏/偏色第一怀疑对象**（回退 /8=5.25MHz 对照）
+    3. `touch.c` 从此依赖 FreeRTOS（vTaskDelay），不能在调度器启动前调用 `Touch_Read`
+    4. 编译文件数 299（原 ~120），全量编译 ~36s；字号/控件全在 `src/lv_conf.h` 裁剪，加控件要记得改配置
+  - **后续触发**：实机若花屏 → 先降 SPI 到 /8；若 RAM 吃紧 → 缩缓冲；Phase 9 需要中文 → 开 `LV_FONT_SIMSUN_16_CJK`（约 170KB Flash，预算内）

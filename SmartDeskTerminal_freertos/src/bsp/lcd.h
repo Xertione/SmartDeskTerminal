@@ -54,6 +54,8 @@ void LCD_ST7789_Init(void);          /* ST7789 初始化序列（15步，厂方 
 void LCD_Write_Data16(uint16_t data); /* 发 16 位数据（RGB565，高字节先发） */
 void LCD_SetAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1); /* 设显示窗口 */
 void LCD_FillScreen(uint16_t color);  /* 填充全屏单色（240×320） */
+void LCD_WriteArea(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1,
+                   const uint16_t *buf);  /* ★ LVGL flush 用：整块像素写入 */
 void LCD_DrawChar(uint16_t x, uint16_t y, char ch, uint16_t fg, uint16_t bg); /* 画单字符 8×16 */
 void LCD_DrawString(uint16_t x, uint16_t y, const char *str, uint16_t fg, uint16_t bg); /* 画字符串 */
 

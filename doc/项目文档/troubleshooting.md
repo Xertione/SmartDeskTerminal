@@ -108,10 +108,20 @@
 - 预防：先抄 doc/ 里对应分辨率的官方 ST7789 例程，别从零写
 - 待踩后补：见上
 
-### T-004（待踩）：LVGL 与 FreeRTOS 的 tick 绑定
+### T-004（已踩，2026-09-25）：LVGL 与 FreeRTOS 的 tick 绑定
 
 - 预期 Phase：6
 - 预期现象：LVGL 界面不刷新 / 抖动
 - 预期根因：`lv_tick_inc()` 没在稳定节拍里调；`lv_timer_handler()` 调用频率不对
-- 预防：用 FreeRTOS 的 1ms 软定时器或 task delay 驱动 lv_tick
-- 待踩后补：见上
+- **实际踩到（编译期变体）**：选了 `LV_TICK_CUSTOM=1` 直接挂 `xTaskGetTickCount()`（比 SysTick 里调 `lv_tick_inc` 更优雅，不动中断），结果 `lv_hal_tick.c` 编译炸出几十个错：
+  ```
+  task.h:34: #error "include FreeRTOS.h must appear in source files before include task.h"
+  ```
+- 实际根因：**FreeRTOS 规定 `task.h` 之前必须先 include `FreeRTOS.h`**（task.h 里有显式 `#error` 检查，它自己不带这条 include）；而 LVGL 的 `LV_TICK_CUSTOM_INCLUDE` 宏**只有一个文件槽**，单塞 `task.h` 违反顺序。
+- 实际解决：写包装头 `src/lvgl_tick_source.h`（内容就两行：先 `FreeRTOS.h` 后 `task.h`），`lv_conf.h` 引用它。
+- 顺带踩到（同一次编译）：`lib_deps` 写 `lvgl/lvgl@^8.3.11`，`^` 语义是"≥8.3.11 的任意 8.x"，PIO 实际拉了 **8.4.0**。要锁 8.3 系列必须写精确版本 `@8.3.11`。
+- 预防 / 规则固化：
+  1. **FreeRTOS 全家头文件有 include 顺序要求：`FreeRTOS.h` 永远第一个**，`task.h`/`queue.h`/`semphr.h` 都在其后。
+  2. 第三方库的"单文件 include 槽"宏需要多条 include 时，**用包装头**，别指望库会自己带依赖。
+  3. semver 前缀（`^`/`~`）在 `lib_deps` 里是**范围**不是版本号，锁定要写全。
+- 验证：修后编译 SUCCESS（RAM 47.3% / Flash 24.0%），运行时行为待实机验证后补记。
