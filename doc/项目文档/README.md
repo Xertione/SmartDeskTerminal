@@ -45,5 +45,5 @@ pio run -t upload    # 烧录到板子（ST-Link）
 | [troubleshooting.md](troubleshooting.md) | 已踩的坑（T-NNN） |
 | [wiring.md](wiring.md) | **物理接线施工单**（拿着杜邦线照着插） |
 | [debug-manual.md](debug-manual.md) | SWD 调试与自助烧录 |
-| [training-invpc.md](training-invpc.md) | **调试训练任务书**（T1~T13，不含答案；一次训练材料，做完可删） |
+| [training-invpc.md](training-invpc.md) | **调试训练任务书**（T0~T11，不含答案；含项目结构总览 + 完整调用链表；一次训练材料，做完可删） |
 | [AGENTS.md](AGENTS.md) | AI 协作规范 + 文档更新规则 + 提交前检查清单 |
