@@ -67,15 +67,35 @@
   3. **区分"校准区间"与"读数正确性"** —— 校准只做线性缩放，治不了读数本身丢位。本次起初误在映射层找原因，根因其实在读位层。
   4. 排查必须配一个**能证伪的观测手段**（本次的双读法对比），否则改完只是自我安慰。
 
-## 预期坑预警（按 Phase 预填）
+## 预期坑预警与回填（按 Phase 预填；已踩的原地补成实际记录）
 
-### T-002（待踩）：FreeRTOS 在 PIO 里集成配置
+> T-002 已踩并回填（2026-09-23）。T-003 触摸侧命中的变体见 **T-006**。T-003 / T-004 仍未踩。
 
-- 预期 Phase：3
-- 预期现象：引入 FreeRTOS 后编译过但跑不起来 / HardFault / 任务不调度
-- 预期根因：① `configTOTAL_HEAP_SIZE` 太小 ② `configMAX_SYSCALL_INTERRUPT_PRIORITY` 配错致临界区失效 ③ SysTick 被 HAL 和 FreeRTOS 双重占用 ④ PendSV/SVC 优先级未设最低
-- 预防：引入前先读 FreeRTOS 官方《Cortex-M3/M4 porting》一节；对照 STM32Cube 的 FreeRTOSConfig.h 模板
-- 待踩后补：实际现象 / 实际根因 / 实际解决
+### T-002（已踩，2026-09-23）：FreeRTOS 集成配置 —— 中断优先级宏未左移，启动第一个任务即 HardFault
+
+> 原预期里的 **②「`configMAX_SYSCALL_INTERRUPT_PRIORITY` 配错致临界区失效」** 与 **④「内核中断优先级未设最低」** —— **两条全中**，且是同一个根因。
+> 详细推理训练见 [training-invpc.md](training-invpc.md)。
+
+- 实际 Phase：3
+- 实际现象：屏静态文字正常、`pre-Sched` 显示、**一个任务都没跑起来**；接管故障向量后屏上：`FAULT: HARD` / `CFSR=0x00040000` / `HFSR=0x40000000`
+- 实际根因：`configKERNEL_INTERRUPT_PRIORITY` / `configMAX_SYSCALL_INTERRUPT_PRIORITY` **未按 `(8 - configPRIO_BITS)` 左移 4 位**（写成 `15` / `5`，应为 **`0xF0` / `0x50`**）。STM32 的 NVIC 优先级寄存器只实现高 4 位，写入 `0x0F` 会被丢成**优先级 0（最高）**，而不是 15（最低）。
+  - 后果 ①：PendSV / SysTick 落到最高优先级，违背"内核中断必须最低"；
+  - 后果 ②：`BASEPRI = 5` 屏蔽不掉优先级 0 → **临界区挡不住 PendSV / SysTick**，内核链表可能被中断中途改写。
+- 定位链（**每一步都用二进制取证，未靠猜**）：
+  1. `CFSR` bit18 = **INVPC（用非法 EXC_RETURN 装载 PC）** → 这类动作只可能出现在 `bx lr` / `bx r14` 上 → 全工程仅 `port.c` 的 `vPortSVCHandler`（启动第一个任务）与 `xPortPendSVHandler`（任务切换）两处；
+  2. 读 `firmware.bin` 前 64 字节核对向量表：[3]HardFault、[11]SVCall、[14]PendSV、[15]SysTick 均已正确指向目标函数 → **排除"软中断落到 `Default_Handler` 死循环"**；
+  3. 反汇编 `SVC_Handler`：`ldr r0,[pxCurrentTCB,#0]` → `ldmia r0!,{r4-r11,lr}` → `msr PSP,r0` → `bx lr`，与 `pxPortInitialiseStack()` 的帧布局（`[0..7]=R4~R11`、`[8]=EXC_RETURN=0xFFFFFFFD`、`[9..16]=R0~xPSR`）**严格一致** → **排除"帧布局不匹配"**；
+  4. `prvPortStartFirstTask` 内含 `msr control,#0` 清 FPCA → **排除 FPU 懒加载/帧类型不匹配**；
+  5. 反汇编 `vPortEnterCritical`，看到 `mov.w r3, #5; msr BASEPRI, r3` —— 常量是 `5` 而不是 `0x50`，**配置未左移在此暴露**。
+- 实际解决：两个宏改为 `<< ( 8 - configPRIO_BITS )`。
+- 验证：修后反汇编 `vPortEnterCritical` = `mov.w r3,#80 @0x50`；`xPortStartScheduler` 写 SHPR3 的常量由 `0x000F0000 / 0x0F000000` 变为 `0xF00000 / 0xF0000000`；烧录后**三任务全部正常调度**。
+- 规则固化：
+  1. **凡是要写进硬件寄存器的"编号"类配置，先确认硬件实现了多少位** —— "优先级编号"与"寄存器值"不是一回事（NVIC 只实现高 4 位，必须 `<< 4`）。
+  2. **移植 RTOS 时，优先级宏一律从官方 STM32 模板抄，不要自己推**。
+  3. **"什么都没发生"的故障，第一步先把静默变可见**：接管 weak 故障向量并打 `CFSR` / `HFSR`；本板 PC0 LED 是坏件 → 提示只能走屏。
+  4. **反汇编 ELF（向量表 / 符号地址 / 机器码里的常量）是不烧录就能排除一半假设的手段** —— 本次 4 条假设全靠它排除。
+  5. 故障处理器若要取真实现场，**异常向量必须用 `naked`**（普通 C 函数序言会改写 SP/LR）；解引用前先判地址合法性，防 double fault。
+- 相关隐患（未阻塞）：`SystemInit()` 只开 FPU、**不设 `SCB->VTOR`**（保持复位值 0），目前靠 F4 的 flash 别名侥幸工作；建议后续在 `main()` 里显式 `SCB->VTOR = 0x08000000;`。
 
 ### T-003（LCD 侧未踩，触摸侧踩到同类变体）：SPI 驱动时序
 

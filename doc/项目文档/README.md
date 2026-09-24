@@ -4,9 +4,9 @@
 
 ## 项目状态
 
-**Phase 5（LCD）+ Phase 7（触摸）已完成实机验证** —— 裸机 UI 可用：文字渲染 + 触摸按钮（可点中、带计数）+ 实时坐标 + 屏上固件版本标识。
+**Phase 1/2/5/7 + Phase 3+4 已完成实机验证** —— 三任务 FreeRTOS 调度正常，屏上文字/触摸按钮/计数/心跳齐全。
 
-下一个要做的：**Phase 3 FreeRTOS**。详见 [progress.md](progress.md)。
+下一个要做的：**Phase 6 LVGL**。详见 [progress.md](progress.md)。
 
 ## 快速开始
 
@@ -45,4 +45,5 @@ pio run -t upload    # 烧录到板子（ST-Link）
 | [troubleshooting.md](troubleshooting.md) | 已踩的坑（T-NNN） |
 | [wiring.md](wiring.md) | **物理接线施工单**（拿着杜邦线照着插） |
 | [debug-manual.md](debug-manual.md) | SWD 调试与自助烧录 |
+| [training-invpc.md](training-invpc.md) | **调试训练任务书**（T1~T13，不含答案；一次训练材料，做完可删） |
 | [AGENTS.md](AGENTS.md) | AI 协作规范 + 文档更新规则 + 提交前检查清单 |

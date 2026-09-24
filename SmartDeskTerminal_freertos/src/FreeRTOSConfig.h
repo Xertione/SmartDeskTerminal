@@ -103,14 +103,17 @@ extern "C" {
 #define INCLUDE_xTaskDelayUntil         1
 #define INCLUDE_xTaskGetTickCount       1
 #define INCLUDE_xTaskAbortDelay         1
-#define INCLUDE_xSemaphoreCreateMutex   1
 #define INCLUDE_xTaskGetCurrentTaskHandle 1
 #define INCLUDE_xTaskGetHandle          0
 #define INCLUDE_eTaskGetState          1
 #define INCLUDE_xEventGroupWaitBits    1
 #define INCLUDE_xTimerPendFunctionCall 1
 #define INCLUDE_uxTaskGetStackHighWaterMark 1
-#define INCLUDE_xTaskGetCurrentTaskHandle 1
+/* 注：INCLUDE_xTaskGetCurrentTaskHandle 已置 1，xTaskGetCurrentTaskHandle() 可用；
+ *     SysTick_Handler 依赖它判断调度器状态（见 main.c）。
+ *     曾经写过的 INCLUDE_xSemaphoreCreateMutex 是**非标准宏** ——
+ *     它在 FreeRTOS-Kernel 10.4.4 全量搜索中命中 0 个文件，写在这里毫无作用，
+ *     创建互斥量的开关其实是 configUSE_MUTEXES。已删除。 */
 
 /* -----------------------------------------------------------
  * 断言（ASSERT）：让 FreeRTOS 内部的配置/参数检查变得可见
@@ -125,7 +128,20 @@ extern "C" {
  * 实现见 main.c 的 vApplicationAssertFailed()。
  * ----------------------------------------------------------- */
 void vApplicationAssertFailed(const char *file, int line);
-#define configASSERT( x )    if( ( x ) == 0 ) vApplicationAssertFailed( __FILE__, __LINE__ )
+/* ⚠️ 栈溢出钩子的声明**不能写在这里** —— FreeRTOSConfig.h 是在
+ * portable.h / task.h **之前**被包含的，此时 TaskHandle_t 还没定义，
+ * 直接写会报 "unknown type name 'TaskHandle_t'"（已实测踩过）。
+ * 该钩子的原型 FreeRTOS 已自带在 task.h:1625，无需重复声明。
+ * 堆失败钩子在 heap_4.c 内部局部 extern，全局虽无声明，
+ * 但 GCC 的 -Wimplicit-function-declaration 只在默认警告级生效，
+ * 本工程实测编译无警告 —— 保持不动。 */
+
+/* do { } while( 0 ) 包裹是 FreeRTOS 官方对 configASSERT 的强制要求：
+ * 不加的话 configASSERT(cond) 展开成裸 if，紧跟其后的 else 会被"悬挂"，
+ * 或宏后面跟分号时语句边界出错 —— 官方文档明确写 "must be enclosed in
+ * do { } while( 0 )"。此处加上，杜绝隐患。 */
+#define configASSERT( x ) \
+    do { if( ( x ) == 0 ) { vApplicationAssertFailed( __FILE__, __LINE__ ); } } while( 0 )
 
 /* -----------------------------------------------------------
  * FreeRTOS 与 HAL 的 SysTick 共存
@@ -136,11 +152,11 @@ void vApplicationAssertFailed(const char *file, int line);
 #define configUSE_TICK_HOOK             0
 #define configCHECK_FOR_STACK_OVERFLOW  2  /* 栈溢出检测方式 2（最严） */
 #define configUSE_MALLOC_FAILED_HOOK    1  /* 堆分配失败钩子 */
-
-/* -----------------------------------------------------------
- * DMA / 内存保护（暂不用）
- * ----------------------------------------------------------- */
-#define configUSE_RECURSIVE_MUTEXES     1
+/* 上面两个开关会分别调用 main.c 里的
+ *   vApplicationStackOverflowHook(TaskHandle_t, char *)  ← 原型见 task.h:1625
+ *   vApplicationMallocFailedHook(void)                   ← heap_4.c 内局部 extern
+ * 两者都已在 main.c 实现，不会出现"未定义引用"的链接错误。
+ * 详见本文件顶部关于为何不能在此声明的说明。 */
 
 /* -----------------------------------------------------------
  * 中断函数映射（port.c 里的中断处理函数名）
