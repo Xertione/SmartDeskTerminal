@@ -24,17 +24,54 @@
 #include <string.h>
 #include <stdio.h>      /* vsnprintf */
 
-/* USB 设备句柄（usbd_conf.c 通过 USBD_LL_Init 把 hUsbDeviceFS.pData 装入这里） */
+/* USB 设备句柄（usbd_conf.c 通过 USBD_LL_Init 把 hpcd_USB_OTG_FS.pData 装入这里） */
 USBD_HandleTypeDef hUsbDeviceFS;
 
-/* USB 初始化（等价 STM32CubeMX 生成的 MX_USB_DEVICE_Init） */
-void USB_CDC_Init(void)
+/* 初始化结果：0 = 成功，非 0 = 见 usb_cdc.h 的 USB_INIT_ERR_*
+   ⚠️ 供 UI 与屏显读取 —— 这个量存在的意义就是"让失败可见"。 */
+volatile uint8_t usb_init_err = USB_INIT_ERR_NONE;
+
+/* USB 初始化
+ *
+ * ⚠️⚠️ 绝对不要写 "失败就 while(1) 死循环"（2026-09-26 血的教训）：
+ *   本函数在 main() 里、**调度器启动之前**被调用。而此刻 BASEPRI 已被
+ *   前面的 FreeRTOS 临界区设成 0x50（`uxCriticalNesting` 初值 0xAAAAAAAA，
+ *   `vPortExitCritical()` 不会还原 BASEPRI，要等第一个任务启动才清），
+ *   ⇒ **SysTick 已被屏蔽**。若在此死循环：
+ *      · HAL_Delay 永久卡死（uwTick 不涨，超时永不触发）
+ *      · 调度器永远起不来 → LVGL 不跑 → **花屏**
+ *      · 屏上无任何提示（Error_Handler 的坏灯分支也是静默的）
+ *   正确做法：记录错误码 + 正常返回，让 LVGL 照常跑起来，
+ *   再把结果画在屏幕上 —— **可选外设失败不该拖死整个系统。**
+ */
+uint8_t USB_CDC_Init(void)
 {
+    usb_init_err = USB_INIT_ERR_NONE;
+
     /* 关联描述符 + CDC class + 接口回调，然后启动设备 */
-    if (USBD_Init(&hUsbDeviceFS, &FS_Desc, 0) != USBD_OK) return;
-    USBD_RegisterClass(&hUsbDeviceFS, &USBD_CDC);
+    if (USBD_Init(&hUsbDeviceFS, &FS_Desc, 0) != USBD_OK)
+    {
+        /* 注意：底层 HAL_PCD_Init 失败也会走到这里（USBD_LL_Init 返回 USBD_FAIL）。
+           用 g_usbd_pcd_init_failed 区分"是 PCD 没起来"还是"协议库自身出错"。 */
+        usb_init_err = g_usbd_pcd_init_failed ? USB_INIT_ERR_PCD : USB_INIT_ERR_USBD_INIT;
+        return usb_init_err;
+    }
+
+    if (USBD_RegisterClass(&hUsbDeviceFS, &USBD_CDC) != USBD_OK)
+    {
+        usb_init_err = USB_INIT_ERR_REG_CLASS;
+        return usb_init_err;
+    }
+
     USBD_CDC_If_Init();
-    USBD_Start(&hUsbDeviceFS);
+
+    if (USBD_Start(&hUsbDeviceFS) != USBD_OK)
+    {
+        usb_init_err = USB_INIT_ERR_START;
+        return usb_init_err;
+    }
+
+    return USB_INIT_ERR_NONE;
 }
 
 /* 发原始字节（CDC 不就绪时直接丢 —— 防止启动期阻塞） */

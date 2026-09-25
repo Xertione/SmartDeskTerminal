@@ -3,9 +3,10 @@
 > 维护语义：**覆盖**。永远只反映当前状态，过期内容直接删掉，不往下堆历史。
 > 历史决策看 `decision-log.md`，已踩的坑看 `troubleshooting.md`。
 
-- 当前阶段：**Phase 8 USB CDC 已修 3 个缺陷，待实机复验**
+- 当前阶段：**Phase 8 花屏/无 COM 口 未收敛；已把"静默失败"改成"屏上可见"，待实机验证。**
+  若下一步仍不通过 → **回退到 Phase 6（`git checkout e545ec3`，标签 `phase6-verified`）**
 - 状态：编译 SUCCESS（327 Compiling / 1 Linking，0 error 0 warning）；RAM 52.0% / Flash 26.3%
-- 最后更新：2026-09-25
+- 最后更新：2026-09-26
 
 ---
 
@@ -68,6 +69,21 @@
 - [x] 编译 SUCCESS：RAM 47.3%（62.0KB）/ Flash 24.0%（126.1KB）/ 0 警告
 - [x] **实机验证通过（2026-09-25 用户确认）**：验收 5 条全过 —— 界面正常 / 按钮可按 / FPS 显示 / HB 每秒刷新 / 颜色正常
   - ✅ 因此 **SPI 10.5MHz 提速本身没问题**（已实证），后续花屏不应再怀疑这里
+
+---
+
+## 回退与分支方案（用户 2026-09-26 授权：修不好就回退 Phase 6）
+
+| 目标 | 命令 |
+|---|---|
+| **回到 Phase 6（最后确认可用的一版）** | `git checkout e545ec3`（等价于标签 `phase6-verified`） |
+| 回到最新（含 Phase 8 与 USB 修复） | `git checkout master` |
+| 临时留一手（不切换、只把 Phase 6 的源码取回工作区） | `git checkout e545ec3 -- SmartDeskTerminal_freertos/src SmartDeskTerminal_freertos/platformio.ini` |
+
+- **Phase 6 那一版的能力边界**：LVGL 界面 + 触摸按钮 + Hits 计数 + 心跳 + FPS，**没有任何 USB**。
+  若确认不再需要 USB，Phase 6 就是一个干净、已实机验证的基线。
+- ⚠️ 用 `git checkout e545ec3` 会进入 detached HEAD，**改动前先 `git status` 确认没有未提交内容**。
+- ⚠️ 回退后 `.pio/build/` 里的旧产物与源码不匹配，建议先停掉调试会话（`Shift+F5`）再重编。
 
 ---
 

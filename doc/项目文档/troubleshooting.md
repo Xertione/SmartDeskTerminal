@@ -215,3 +215,58 @@
   5. **两套内存管理并存**（newlib 堆 + FreeRTOS 堆 + 库自带静态池）要主动收敛；
      能静态就不要动态，尤其在一层只分配一次的中间件里。
 
+### T-008（已踩，2026-09-26）：调度器启动前的 `while(1)` 静默吊死 + 调试会话锁住 firmware.elf
+
+> 本案是"花屏 + 无 COM 口"排查的后半段。**核心教训：可选外设的初始化失败绝不该让整个系统死掉。**
+
+- 现象：Phase 8 烧录后花屏、PC 无虚拟 COM 口；`uwTick` 不涨、`PRIMASK=0`、`ICSR VECTACTIVE=0`、无 HardFault。
+- 机制（FreeRTOS ARM_CM4F `port.c` 源码级证据，已逐行核实）：
+
+  | 位置 | 代码 | 意义 |
+  |---|---|---|
+  | `port.c:148` | `static UBaseType_t uxCriticalNesting = 0xaaaaaaaa;` | 初值是**非零毒值** |
+  | `vPortExitCritical()` | `uxCriticalNesting--; if (uxCriticalNesting == 0) portENABLE_INTERRUPTS();` | 只有计数**回到 0** 才还原 BASEPRI |
+  | `vPortSVCHandler()` L256-257 | `mov r0, #0` / `msr basepri, r0` | BASEPRI **只在"启动第一个任务"时才被清掉** |
+
+  - ⇒ **调度器启动之前的任何一次 `taskENTER_CRITICAL()`，退出时都不会还原 BASEPRI**
+    （计数值从 `0xAAAAAAAA` → `0xAAAAAAAB` → `0xAAAAAAAA`，**永远不等于 0**）。
+  - ⇒ `BASEPRI` 停在 `configMAX_SYSCALL_INTERRUPT_PRIORITY = 0x50`，屏蔽优先级数值 ≥ 5 的中断；
+    **SysTick 优先级 15（`configKERNEL_INTERRUPT_PRIORITY = 0xF0`）→ 被屏蔽
+    → `uwTick` 冻死 → `HAL_Delay` 永久卡死。**
+  - 窗口起点 = 第一次 FreeRTOS 临界区（`xQueueCreate`，即 `agent_queue_init()` 内部）；
+    终点 = `vPortSVCHandler`。**`USB_CDC_Init()`（Phase 8 新加）正好落在这个窗口里。**
+  - 这也解释了**为什么 Phase 6 好、Phase 8 坏**：Phase 6 没有这两行，窗口从 `xTaskCreate` 才开始，
+    那段没有可卡住的代码。
+- 头号嫌疑（已修）：`usbd_conf.c` 的 `USBD_LL_Init` 里
+  `if (HAL_PCD_Init(...) != HAL_OK) { while (1) { } }` —— 窗口内**唯一**会无限循环且不产生 fault 的地方。
+  **一旦 USB 初始化失败就静默吊死：不刷屏、不枚举、无任何提示。**
+  已排除的旁路：`hal_pcd.c` / `ll_usb.c` 里 `HAL_GetTick` 出现 **0 次** ⇒ USB 底层没有基于 tick 的超时。
+- 实际解决（把"静默失败"变成"屏上可见"）：
+  1. `usbd_conf.c`：删掉 `while(1)`，改为置 `g_usbd_pcd_init_failed = 1` 并 `return USBD_FAIL`
+  2. `usb_cdc.h/.c`：`USB_CDC_Init()` 改为**返回错误码**
+     （`USB_INIT_ERR_USBD_INIT / REG_CLASS / START / PCD`），新增全局 `usb_init_err`
+  3. `main.c`：接返回值，并**绕过 LVGL 直接在屏上画** `USB: ok` / `USB: FAIL code=N`
+  4. `ui.c`：LVGL 界面加一行常驻 `USB CDC: ok` / `FAIL (PCD init)`
+  5. 全量重编：**327 Compiling + 1 Linking，0 error 0 warning**，Flash 138016 B（26.3%）/ RAM 68212 B（52.0%）
+- 规则固化：
+  1. **`while(1)` 永远不是错误处理。** 尤其不能在"调度器启动前、中断已被 BASEPRI 屏蔽"的窗口里用。
+     错误处理要么返回错误码，要么走可见报错通道（屏 / 串口）。
+  2. **`vTaskStartScheduler()` 之前不要做"可能失败又重要"的初始化。** 真要做，先想清楚：
+     此刻 BASEPRI 已被前面的 FreeRTOS 临界区设为 `0x50`，**SysTick 是屏蔽的，`HAL_Delay` 会死等**。
+  3. **可选外设（USB / 串口 / 传感器）初始化失败，必须让主体功能继续跑**，并把错误显示出来。
+  4. **`firmware.elf` 被锁的头号原因是"调试会话还开着"**（`arm-none-eabi-gdb` + `openocd` 进程在跑）。
+     查法：`Get-Process | Where-Object { $_.ProcessName -match 'gdb|openocd' }`。
+     解法：VS Code 里按 **`Shift+F5` 停止调试**。
+  5. ⚠️ **调试会话把目标板 HALT 住时，`uwTick` / 任何 RAM 变量都不会变化** ——
+     此时读到的"卡死"是**测量假象**。必须先 `Shift+F5` 释放，或按
+     **"F5 自由跑 N 秒 → F6 暂停 → 读"** 的时序测，不能连续两次暂停读。
+  6. **`PLATFORMIO_BUILD_DIR` 环境变量**可在不改 `platformio.ini` 的前提下换构建目录，
+     用于绕过被占用的 `firmware.elf`（构建报 `SAFE_DELETE_FAIL_CLOSED` / `WinError 32` 时）：
+
+     ```
+     PLATFORMIO_BUILD_DIR=<绝对路径> pio run
+     ```
+
+     （根因仍是"elf 被占用"，根治办法是停掉调试会话。）
+
+

@@ -103,6 +103,21 @@ void ui_create(void)
     add_label(scr, "SYSCLK: 168 MHz",       0x00E5FF);
     add_label(scr, "Build " __DATE__ " " __TIME__, 0x9E9E9E);
 
+    /* USB 初始化结果 —— 常驻可见。
+       为什么值得占一行：USB 是"会静默失败"的子系统，失败时 PC 侧什么也看不到；
+       把错误码钉在界面上，比反复插拔线猜快得多。0 = OK。 */
+    if (usb_init_err == USB_INIT_ERR_NONE)
+    {
+        add_label(scr, "USB CDC: ok", 0x00C853);
+    }
+    else
+    {
+        add_label(scr, usb_init_err == USB_INIT_ERR_PCD
+                        ? "USB CDC: FAIL (PCD init)"
+                        : "USB CDC: FAIL (see code)",
+                  0xFF1744);
+    }
+
     /* ---- 按钮（点击默认主题自带按下变色反馈，替代旧版手搓闪红）---- */
     lv_obj_t *btn = lv_btn_create(scr);
     lv_obj_set_size(btn, 150, 45);

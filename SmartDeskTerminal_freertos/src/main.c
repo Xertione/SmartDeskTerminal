@@ -90,8 +90,35 @@ int main(void)
     /* Agent ↔ UI 队列（队列回归，Phase 8 重启） */
     agent_queue_init();
 
-    /* USB CDC 初始化（在调度器启动前 —— USB 中断自己工作，不需要 RTOS） */
-    USB_CDC_Init();
+    /* USB CDC 初始化（在调度器启动前 —— USB 中断自己工作，不需要 RTOS）
+       ⚠️ 必须检查返回值：失败时**不能死循环**，只记录错误让系统继续跑。
+          原因见 usb_cdc.c 的 USB_CDC_Init 注释（此刻 BASEPRI=0x50 已屏蔽 SysTick，
+          在这里死循环会让整个系统静默吊死 → 屏不刷/无 COM 口/无任何提示）。 */
+    uint8_t usb_ok = USB_CDC_Init();
+
+    /* ── 把 USB 初始化结果**直接画在屏上**（不经过 LVGL）──────────────
+       目的：USB 这条路是"会静默失败"的，必须在屏上留一条不依赖任何
+       后续子系统的证据。LVGL 起来后会覆盖这块区域，但那时说明系统是活的，
+       UI 里还有一份（见 ui.c 的 USB 状态行）。 */
+    {
+        char l[32];
+        int  k = 0;
+        const char *p = "USB: ";
+        for (int m = 0; p[m]; m++) l[k++] = p[m];
+        if (usb_ok == 0)
+        {
+            const char *s = "ok";
+            for (int m = 0; s[m]; m++) l[k++] = s[m];
+        }
+        else
+        {
+            const char *s = "FAIL code=";
+            for (int m = 0; s[m]; m++) l[k++] = s[m];
+            l[k++] = (char)('0' + (usb_ok % 10));
+        }
+        l[k] = 0;
+        LCD_DrawString(8, 310, l, (usb_ok == 0) ? LCD_GREEN : LCD_RED, LCD_BLACK);
+    }
 
     /* 任务架构：
        Task_LVGL(prio 3, 栈 768字)：LVGL 渲染 + lv_timer_handler + 收 Agent 队列

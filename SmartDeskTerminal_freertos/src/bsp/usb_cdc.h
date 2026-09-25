@@ -15,8 +15,24 @@
 
 #include <stdint.h>
 
-/* 初始化 USB CDC 设备（创建描述符 + 协议库 + 接口 + 启动枚举） */
-void USB_CDC_Init(void);
+/* 初始化 USB CDC 设备（创建描述符 + 协议库 + 接口 + 启动枚举）
+ * 返回值：0 = 成功；非 0 = 失败（见下方 USB_INIT_ERR_* 常量）
+ * ⚠️ 调用方**必须**检查返回值并把结果显示出来（屏/串口）。
+ *    绝不能再有"失败就 while(1)"那种设计 —— 会导致整个系统静默吊死。 */
+uint8_t USB_CDC_Init(void);
+
+/* USB 初始化错误码（usb_cdc.c 里的全局 usb_init_err） */
+#define USB_INIT_ERR_NONE        0U   /* 成功 */
+#define USB_INIT_ERR_USBD_INIT   1U   /* USBD_Init 失败（含底层 PCD 初始化失败） */
+#define USB_INIT_ERR_REG_CLASS   2U   /* USBD_RegisterClass 失败 */
+#define USB_INIT_ERR_START       3U   /* USBD_Start 失败 */
+#define USB_INIT_ERR_PCD         4U   /* HAL_PCD_Init 失败（usbd_conf.c 上报） */
+
+/* 初始化结果（供 UI / 屏显读取；0 = OK） */
+extern volatile uint8_t usb_init_err;
+
+/* 底层 PCD 初始化失败标志（定义在 usbd_conf.c） */
+extern volatile uint8_t g_usbd_pcd_init_failed;
 
 /* 发字符串（不含 \0，自带 \r\n 不替换 —— 上层自己加） */
 void USB_CDC_Send(const char *s, uint16_t len);

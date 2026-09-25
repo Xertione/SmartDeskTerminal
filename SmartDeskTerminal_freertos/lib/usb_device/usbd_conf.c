@@ -122,6 +122,10 @@ void HAL_PCD_MspDeInit(PCD_HandleTypeDef *hpcd)
     }
 }
 
+/* ⚠️ PCD 初始化结果。USB_CDC_Init() 会读它判断失败原因并回报给上层。
+   之所以需要这个全局量：USBD_LL_Init 只能返回 USBD_FAIL，无法表达"哪一步失败"。 */
+volatile uint8_t g_usbd_pcd_init_failed = 0;
+
 /* USBD_LL_Init 由协议库在初始化路径里调用，把 hpcd 装进 USBD_HandleTypeDef */
 USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
 {
@@ -144,10 +148,20 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
     hpcd_USB_OTG_FS.Init.battery_charging_enable = DISABLE;
 
     /* ⚠️ HAL_PCD_Init 内部会回调 HAL_PCD_MspInit（本文件上方实现）
-       —— 引脚 AF 配置与 NVIC 都在那里面完成，这里不需要重复设置。 */
+       —— 引脚 AF 配置与 NVIC 都在那里面完成，这里不需要重复设置。
+       ⚠️⚠️ 失败时**绝不能 while(1) 死循环**（2026-09-26 修）：
+          这个函数运行在 main() 里、**调度器启动之前**，
+          而此时 BASEPRI 已被前面的 FreeRTOS 临界区设成 0x50（因为
+          uxCriticalNesting 的初值是 0xAAAAAAAA，vPortExitCritical 不会
+          还原 BASEPRI，要等第一个任务启动才清）——所以 SysTick 已被屏蔽、
+          `HAL_Delay` 会永久卡死；一旦在这里死循环，整个系统静默吊死：
+          屏不刷（花屏）、无 COM 口、无红屏、无任何提示。
+          ⇒ 正确做法：记录下来 + 返回失败，让上层继续跑（LVGL 照常工作），
+            把错误显示在屏幕上。**可选外设的初始化失败不该拖死整个系统。** */
     if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
     {
-        while (1) { /* 静默死循环：此前屏已初始化，上层会因 USB 不响应立即看到 */ }
+        g_usbd_pcd_init_failed = 1U;
+        return USBD_FAIL;
     }
 
     return USBD_OK;
