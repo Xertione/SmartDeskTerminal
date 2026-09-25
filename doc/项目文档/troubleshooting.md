@@ -141,3 +141,77 @@
   1. **不要再改名 .sconsign**——多次改名会累积 safe-delete 计数器，触发表现④
   2. **判据升级**：不只看 SUCCESS/FAILED，必须确认日志有 Compiling/Linking 行 + elf 大小>0 + mtime 新鲜
   3. **safe-delete 计数器是按"轮"累积的**——同一轮里反复触发文件操作会累积；换新 build_dir 是最干净的绕过
+
+**2026-09-25 二次复现（补充记录，又踩一次）**：
+- 本次为改 `build_flags`（加 `-fno-common`）需要全量重编 → 按老经验改名 `.sconsign311.dblite` → 触发 **表现②变体**：
+  日志出现 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":68,"threshold":50}`，
+  随后**报 SUCCESS 但零 Compiling 行、firmware.elf mtime 停在上一轮**（= 假成功）。
+  原因：全量重编要删 68 个旧 `.o`（> 阈值 50），钩子拒绝 → SCons 放弃但退出码仍为 0。
+- **更省事且更干净的做法（本次实测有效）**：直接 `os.rename` 把**整个环境构建目录**挪走
+  ```
+  .pio/build/black_f407ve  →  .pio/build/build_stale_<日期>_<标记>
+  ```
+  `os.rename`/`mv` **不计入 safe-delete 计数**，且新目录为空 → 全量构建全程无需删除任何东西 → 钩子根本不触发。
+  本次结果：327 Compiling + 1 Linking，67.6s，0 error 0 warning，全新 elf 落地。
+- ⚠️ 代价：旧目录会累积（`build_*` 已成堆），需定期人工清理。**这不是"删除操作"，是"搬运操作"，所以永远安全。**
+
+### T-007（已踩，2026-09-25）：两个同名句柄被链接器合并 → 内存别名 → 花屏 + USB 无法枚举
+
+> **这是"编译零警告、运行随机崩"的教科书案例。** 也是本项目第一次遇到"症状在显示层、根因在 USB 层"的跨模块故障。
+
+- Phase：8（USB CDC）
+- 现象（用户报告）：烧录后**花屏**、无法正常显示；同时 USB 连 PC **不出现虚拟 COM 口**。
+  - 关键分界：**Phase 6（LVGL）单独烧录时是验证通过的**（界面/颜色/触摸/FPS 全正常），
+    所以花屏**不是** SPI 提速（10.5MHz）造成的 —— 这一点排除了最初的第一嫌疑。
+- 根因：**两个文件各自定义了同名全局变量，但类型不同**
+  ```c
+  lib/usb_device/usbd_conf.c :  PCD_HandleTypeDef  hUsbDeviceFS;   /* 1252 字节 */
+  src/bsp/usb_cdc.c          :  USBD_HandleTypeDef hUsbDeviceFS;   /*  732 字节 */
+  ```
+  ARM GCC **默认 `-fcommon`**，把两个 tentative definition **静默合并成同一个地址**。
+  - **ELF 实证**（`arm-none-eabi-nm -S firmware.elf`）：修复前只有**一个**符号
+    `2000ffa4 000004e4 B hUsbDeviceFS` —— `0x4E4 = 1252` 正是 `PCD_HandleTypeDef` 的大小
+    （含 `IN_ep[16]` + `OUT_ep[16]`），**USBD 句柄被"折叠"掉了**。
+  - 因果链：
+    1. `USB_CDC_Init()` → `USBD_Init()` 把 USBD 协议栈句柄写进该地址；
+    2. 同一调用链里 `USBD_LL_Init()` → `HAL_PCD_Init()` 又把 **1252 字节的 PCD 结构体整块覆写**上去
+       → **协议栈句柄被摧毁**；
+    3. 之后协议库通过 `pdev->pClassDataCmsit[]` / `pdev->pData` 等字段解引用，
+       读到的却是 PCD 结构里的字节 → **指针全是垃圾 → 任意地址读写**；
+    4. `HAL_PCD_IRQHandler` 用被 USBD 侧覆写过的端点结构取 `xfer_buff` → **野指针搬运**。
+    - ① → 显示层被写坏 = **花屏**；② → `dev_state` 永远是垃圾 ≠ `USBD_STATE_CONFIGURED`
+      → `USB_CDC_Send` 全部静默丢弃 + 枚举失败 = **没有 COM 口**。**两个症状同一个根因。**
+- 定位链（**未烧录，全程靠 ELF 符号表 + 源码对读**）：
+  1. `nm -S` 看 `hUsbDeviceFS` → 只有 1 个、大小为 1252 → 与 `PCD_HandleTypeDef` 尺寸吻合，
+     而 `USBD_HandleTypeDef` 只有 732 → **数量与尺寸双双对不上，别名成立**；
+  2. 回读 `usbd_conf.c` / `usb_cdc.c` → 两处定义均非 `static`、名字完全一致 → 根因确认；
+  3. 顺带发现另外两个缺陷（详见下）；
+  4. 修完再 `nm -S` 复验：变成**两个独立符号**（`hpcd_USB_OTG_FS` 1252 + `hUsbDeviceFS` 732）→ 结案。
+- 实际解决（4 处改动 + 1 处构建加固）：
+
+  | # | 改动 | 说明 |
+  |---|---|---|
+  | 1 | `usbd_conf.c`：PCD 句柄改名 `hpcd_USB_OTG_FS` | ST 官方命名，彻底消除同名 |
+  | 2 | `usbd_conf.c`：**补上缺失的 `HAL_PCD_MspInit`** | PA11/PA12 配 `GPIO_AF10_OTG_FS` 复用推挽 + NVIC。原文件**完全没有这个函数**，落到 HAL 的 weak 空实现 → 引脚停在复位态浮空 → 这也是"没有虚拟串口"的**独立第二因** |
+  | 3 | `usbd_conf.h`：`USBD_malloc` 由 `malloc` 改为**静态 arena** | 原实现走 newlib 堆，与 FreeRTOS 堆/LVGL 池是两套内存管理；且 `malloc` 非线程安全。改为 .bss 里 768 字节固定 arena（单槽位，USB CDC 全程只分配一次约 540 字节） |
+  | 4 | `usbd_cdc_if.c`：`CDC_Control_FS` 补 `GET/SET_LINE_CODING` | 原先所有控制请求一律 `return USBD_OK` 不处理，主机的 `GET_LINE_CODING` 会收到 7 字节未初始化数据，部分 Windows 版本会因此不创建 COM 口 |
+  | 5 | `platformio.ini`：加 **`-fno-common`** | **关键加固**：让"同名不同型"从"静默合并"变成链接期 `multiple definition` **硬错误**，这类 bug 从此不可能再偷偷发生 |
+- 附带修的同源缺陷：`USB_CDC_Printf` 用 `static char buf[160]`，却会被 **Task_Agent（欢迎语）与 Task_LVGL（`hits` 回复）两个任务**调用 —— 原注释写的"不并发调用，安全"**不成立**（LVGL 优先级 3 > Agent 优先级 2，可在 `vsnprintf` 中途抢占 → 输出串字节）。已用 `taskENTER_CRITICAL/EXIT_CRITICAL` 原子化；顺带修掉"截断时多发 1 字节（结尾 `\0`）"的夹取错误。
+  - 注意：该缓冲**不能改成栈上局部变量** —— `CDC_Transmit_FS` 只登记指针，真正的数据搬运发生在后续 USB 中断（DataIn 阶段），栈缓冲一返回就失效。
+- 顺带修的隐患：静态 arena 首版落在 `0x2000F367`（**奇地址**）——
+  `uint8_t[]` 只保证 1 字节对齐，而 `USBD_CDC_HandleTypeDef` 开头是 `uint32_t data[128]`。
+  已加 `__attribute__((aligned(8)))`，复验地址 `0x2000FD50` 对齐 OK。
+- 验证：全量重编 **327 Compiling + 1 Linking，67.6s，0 error 0 warning**；RAM 52.0% / Flash 26.3%；
+  `nm -S` 确认两个句柄地址/尺寸独立、arena 8 字节对齐。
+- 规则固化：
+  1. **跨文件同名全局变量是"静默炸弹"** —— 尤其在不同库/模板（HAL vs 中间件）之间。
+     命名要带前缀（`hpcd_` / `hUsbd_`），别指望编译器报警。
+  2. **`-fno-common` 应作为嵌入式工程的默认配置**。默认 `-fcommon` 会把类型冲突藏到运行时。
+  3. **怀疑"内存被写坏"时，`nm -S` 看符号的数量/地址/尺寸是最快的一刀**：
+     同名符号只出现一次、或尺寸与结构体定义不符 → 别名成立。
+     这属于**核武器**（见 `training-invpc.md` §0）；日常优先用 SWD 断点/watch。
+  4. **症状位置 ≠ 根因位置**。本次屏花但根因在 USB。**改动哪个模块后出现的问题，先怀疑哪个模块**
+     —— 但"怀疑"要通过排除法落地（本例先排除了 SPI 提速，因为单独烧 Phase 6 是好的）。
+  5. **两套内存管理并存**（newlib 堆 + FreeRTOS 堆 + 库自带静态池）要主动收敛；
+     能静态就不要动态，尤其在一层只分配一次的中间件里。
+

@@ -18,6 +18,8 @@
 #include "usbd_core.h"
 #include "usbd_desc.h"
 #include "usbd_cdc_if.h"
+#include "FreeRTOS.h"
+#include "task.h"       /* taskENTER_CRITICAL / taskEXIT_CRITICAL */
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>      /* vsnprintf */
@@ -43,21 +45,42 @@ void USB_CDC_Send(const char *s, uint16_t len)
     CDC_Transmit_FS((uint8_t *)s, len);
 }
 
-/* printf 风格：用 vsnprintf 进临时缓冲再发（避免 USB 端点大小限制） */
+/* printf 风格：用 vsnprintf 进持久缓冲再发（避免 USB 端点大小限制）
+ *
+ * ⚠️ 两个必须注意的点（2026-09-25 修）：
+ *  ① 缓冲**必须持久**（不能放栈上）——CDC_Transmit_FS 只是把指针交给端点，
+ *     真正的搬运发生在后续的 USB 中断（DataIn 阶段）。栈缓冲一返回就失效，
+ *     中断读到的是被覆盖的栈 → 线上出现随机字节。
+ *  ② 缓冲是 static 的，而本函数会被 **两个任务**调用：
+ *       Task_Agent（上电欢迎语，main.c）
+ *       Task_LVGL （`hits` 命令回复，走 ui_poll_agent → 本函数）
+ *     Task_LVGL 优先级(3) > Task_Agent(2)，能在 vsnprintf 中途抢占它，
+ *     导致输出串字节。原注释写的"不并发调用，安全"**不成立**。
+ *     这里用临界区把"格式化 + 装载端点"变成一个原子段。
+ */
 void USB_CDC_Printf(const char *fmt, ...)
 {
     if (!USB_CDC_IsConfigured()) return;
 
-    static char buf[160];   /* 静态避免栈占用；不并发调用，安全 */
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    if (n > 0)
+    static char buf[160];
+
+    taskENTER_CRITICAL();      /* 关中断：原子化"格式化+装载"，防跨任务串字节 */
     {
-        if (n > (int)sizeof(buf)) n = sizeof(buf);
-        USB_CDC_Send(buf, (uint16_t)n);
+        va_list ap;
+        va_start(ap, fmt);
+        int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+
+        if (n > 0)
+        {
+            /* vsnprintf 返回"本该写入的长度"，截断时会 > sizeof(buf)。
+               ⚠️ 原实现写 `n = sizeof(buf)` 会多发 1 个字节（含结尾 '\0'），
+                 这里夹到 sizeof(buf)-1，只发真实字符。 */
+            if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+            USB_CDC_Send(buf, (uint16_t)n);
+        }
     }
+    taskEXIT_CRITICAL();
 }
 
 /* 轮询：取环形缓冲字节喂给命令解析器 */

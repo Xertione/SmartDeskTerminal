@@ -1,0 +1,17 @@
+{
+  "name": "usb_device",
+  "version": "1.0.0",
+  "build": {
+    "srcDir": ".",
+    "includeDir": ".",
+    "srcFilter": [
+      "+<usbd_core.c>",
+      "+<usbd_ctlreq.c>",
+      "+<usbd_ioreq.c>",
+      "+<usbd_cdc.c>",
+      "+<usbd_conf.c>",
+      "+<usbd_desc.c>",
+      "+<usbd_cdc_if.c>"
+    ]
+  }
+}

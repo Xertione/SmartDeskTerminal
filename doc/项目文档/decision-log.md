@@ -234,3 +234,80 @@
     4. USB 中断优先级 6 与 FreeRTOS 临界区（BASEPRI=5）兼容，但 USB 中断里不能调 RTOS API（当前没调，安全）
     5. **safe-delete 表现④（新发现）**：PIO 启动时反复尝试清理 .sconsign 改名残留文件，全部被 REJECTED → SCons 无法初始化数据库 → 跳过构建报假 SUCCESS。绕过方法：换新 build_dir。
   - **后续触发**：Phase 9 需要更丰富命令协议 → 扩展 cmd.c；PC Agent 需要结构化数据 → 改 CDC 传输格式
+
+## ADR-015：T-007 修复策略 —— 句柄改名 + 补 MSP + 静态分配 + `-fno-common`
+
+- 日期：2026-09-25
+- 背景：ADR-014 落地后首次实机**失败**：烧录后花屏 + PC 无虚拟 COM 口。
+  用户明确澄清 **Phase 6（LVGL）单独烧录时验证通过**，因此花屏是 Phase 8 引入的回归，
+  **SPI 10.5MHz 提速被排除嫌疑**。排查后定位到 3 个确定性缺陷（详见 `troubleshooting.md` **T-007**）：
+  ① `hUsbDeviceFS` 同名不同型被链接器 `-fcommon` 静默合并 → 内存别名 → 野指针任意写；
+  ② `HAL_PCD_MspInit` 全工程缺失 → PA11/PA12 从未配成 AF10；
+  ③ `USBD_malloc` 走 newlib 堆（与 FreeRTOS 堆/LVGL 池两套并存，且非线程安全）。
+- 决定：
+  1. **句柄命名规范**：PCD 句柄改 `hpcd_USB_OTG_FS`，USBD 句柄保留 `hUsbDeviceFS`（ST 官方命名约定）。
+     今后所有句柄加类型前缀（`hpcd_` / `husbd_` / `hspi_` …）。
+  2. **补 `HAL_PCD_MspInit` / `HAL_PCD_MspDeInit`**，执行 `GPIO_AF10_OTG_FS` 的 PA11/PA12 配置 + NVIC；
+     不配 PA9（VBUS 检测关闭，避免与 H1 的 USART1_TX 抢脚）。
+  3. **`USBD_malloc` 改静态 arena**（768B，`aligned(8)`，单槽位），彻底不碰 newlib 堆。
+  4. **构建加固：`-fno-common`**（写进 `platformio.ini` 并加注释锁死）。
+  5. **补 `CDC_Control_FS` 的 `GET/SET_LINE_CODING`**（部分 Windows 版本依赖它才创建 COM 口）。
+  6. **`USB_CDC_Printf` 的共享静态缓冲加临界区**（原被 Task_Agent / Task_LVGL 并发调用）。
+- 原因：
+  1. ①是**症状的全部来源**（花屏与无 COM 口同源），且属"编译零警告、运行才崩"的最难查类别；
+  2. ②是"没有虚拟串口"的**独立第二因**，即便修了①也枚举不出来；
+  3. ③④⑤⑥属同一模块内的同源隐患，一次改干净，避免下轮再来；
+  4. **`-fno-common` 是本次最有价值的长期收益**：把这类 bug 从"运行期随机崩"提前到"链接期硬报错"。
+- 后果：
+  - **RAM 52.0%（68212B）/ Flash 26.3%（137704B）**，0 error 0 warning（全量 327 Compiling + 1 Linking）。
+  - `nm -S` 复验：`hpcd_USB_OTG_FS`（1252B @0x2000F868，8 字节对齐）与 `hUsbDeviceFS`（732B @0x200002A4）
+    成为**两个独立符号**；`usbd_arena` 768B @0x2000FD50 对齐 OK。
+  - **代价**：`-fno-common` 一旦将来引入有真实重复定义的第三方库，会直接链接失败（这是**期望行为**，
+    早失败早发现）；RAM 再涨 1.5KB，Phase 9/10 的余量进一步收窄。
+  - **后续触发**：若 Phase 9 引入更多中间件，注意同类别名；若 RAM 逼近上限，先砍 LVGL 绘制缓冲。
+
+## ADR-016：PC ↔ MCU 通信协议格式定稿（行式类型化文本，非 JSON）
+
+- 日期：2026-09-25
+- 背景：`plan.md` 里只有一个 JSON 雏形（`{"type":"event","msg":"compile success"}`），从未敲定。
+  需在 Phase 9 前定稿，因为两边（`cmd.c` / Python agent）都要按它写。
+  约束：MCU 侧 RAM 余量已过半、无 JSON 解析库、FreeRTOS 堆只有 8KB、用户是嵌入式初学者。
+- 决定：**行式类型化文本（line-delimited typed text）**，不做 JSON。
+  - 帧：每行一条消息，`\r\n` 结尾（兼容一切串口终端）
+  - 语法：`<TYPE> <key>=<value> [<key>=<value> ...]`
+  - 类型表：
+
+    | TYPE | 方向 | 语义 |
+    |---|---|---|
+    | `CMD` | PC → MCU | 命令（有响应） |
+    | `EVT` | PC → MCU | 事件推送（无响应） |
+    | `ACK` | MCU → PC | 命令成功响应 |
+    | `ERR` | MCU → PC | 命令失败响应（带 `code=`/`msg=`） |
+    | `DAT` | MCU → PC | 主动上报数据 |
+  - 示例：
+    ```
+    PC→MCU   CMD name=hello
+    MCU→PC   ACK name=hello
+    PC→MCU   CMD name=hits
+    MCU→PC   DAT hits=3
+    PC→MCU   EVT kind=build status=success proj=SmartDesk
+    MCU→PC   DAT kind=build status=success
+    ```
+  - **向后兼容**：不以 `CMD`/`EVT`/`ACK`/`ERR`/`DAT` 开头的行，按**原裸命令**解析
+    （`hello` / `version` / `hits` / `clear` / `ping` / `help`）→ 人肉调试体验不变，现有 `cmd.c` 不用推翻。
+  - 文本值中的空格用 `+` 代替（一条 `strchr` 就能还原，零转义复杂度）。
+- 原因：
+  1. **JSON 在 MCU 上没有收益只有成本**：需要引入/自写解析器（内存 + 攻击面），而本项目消息 schema 极窄
+     （就几个 key），手写 JSON 解析器是 bug 温床；user 是初学者，调试一个手写 parser 会拖垮进度。
+  2. **行式文本天然可调试**：任何串口终端都能直接读、直接敲，不需要 host 端脚本就能手工验证 ——
+     这与本项目"每步都要有可观测判据"的方法论一致。
+  3. **key=value 的扩展性足够**：加字段不破坏老解析器（未知 key 忽略即可），升级成本近乎为零。
+  4. **保留裸命令通道**：现有 `cmd.c` 已验证可用，不推翻；`CMD name=` 只是它的"带标识版本"。
+  5. **将来要上 JSON 也不阻塞**：帧层（行 + `\r\n` + TYPE 前缀）不变，只换 `key=value` 的载荷编码即可，
+     属于**可平滑演进**的设计。
+- 后果：
+  - `cmd.c` 只需加一层"剥 TYPE 前缀 → 若为 `CMD` 则再解析 key=value"，裸命令路径原样保留。
+  - PC 端 Python agent 用 `serial.readline()` + `str.split()` 即可，零依赖（不需要 `pyserial` 之外的东西）。
+  - **代价**：不支持嵌套结构（本项目不需要）；长文本需 `+` 编码（当前消息都不长）。
+  - **待定**：是否需要**校验和/序号**（当前 USB CDC 有硬件级重传，暂不加；若将来改 UART 裸线再议）。
+

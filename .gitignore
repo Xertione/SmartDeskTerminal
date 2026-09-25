@@ -18,8 +18,18 @@
 **/*.list
 
 # FreeRTOS-Kernel（ADR-012：用 PIO lib_deps 管理，在 .pio/libdeps/ 下）
-# lib/ 下的 clone 残留不入库
-SmartDeskTerminal_freertos/lib/
+# ⚠️⚠️ 只排除 clone 残留的 FreeRTOS-Kernel 目录，**绝不要整目录排除 lib/**！⚠️⚠️
+#   2026-09-25 事故：原规则写的是 `SmartDeskTerminal_freertos/lib/`（整个目录），
+#   而 Phase 8 把 USB Device 中间件复制到了 `lib/usb_device/`（18 文件 155KB），
+#   于是它**从未进入仓库** —— 后果：
+#     ① fresh clone 无法编译（缺 usbd_core.h 等头文件）；
+#     ② T-007 的修复（句柄改名/MSP/静态分配）全在未跟踪文件里，随时可能丢；
+#     ③ ADR-014 的提交信息声称"复制中间件到 lib/usb_device/"，实际一个文件都没提交。
+#   当时写整目录排除是因为 lib/ 下堆了 20MB 的 FreeRTOS-Kernel clone 残留，
+#   那个残留早已删除，规则却留了下来继续造成伤害。
+#   判据：**vendor 的"模板复制版"必须入库**（否则构建不可复现）；
+#        能由包管理器拉回来的（PIO lib_deps / .pio 产物）才排除。
+SmartDeskTerminal_freertos/lib/FreeRTOS-Kernel/
 
 # 原厂硬件资料体积大（6000+文件/581M），磁盘保留但不入 repo
 # 精简版整理见 doc/datasheets_md/（11 个 md）
