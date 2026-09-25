@@ -3,10 +3,10 @@
 > 维护语义：**覆盖**。永远只反映当前状态，过期内容直接删掉，不往下堆历史。
 > 历史决策看 `decision-log.md`，已踩的坑看 `troubleshooting.md`。
 
-- 当前阶段：**Phase 8 花屏/无 COM 口 未收敛；已把"静默失败"改成"屏上可见"，待实机验证。**
-  若下一步仍不通过 → **回退到 Phase 6（`git checkout e545ec3`，标签 `phase6-verified`）**
-- 状态：编译 SUCCESS（327 Compiling / 1 Linking，0 error 0 warning）；RAM 52.0% / Flash 26.3%
+- 当前阶段：**Phase 8「花屏」已修复并实机验证通过**（根因与复盘见 `troubleshooting.md` T-008 及其后的复盘章节）
+- 状态：屏上 LVGL 界面正常；**USB 虚拟串口的 7 条验收标准尚待逐条确认**
 - 最后更新：2026-09-26
+- 🎯 **最后确认可用的基线**：标签 `phase6-verified` = `e545ec3`（无 USB 的干净版本，随时可回退）
 
 ---
 
@@ -56,8 +56,16 @@
 - [x] 修复③：`USBD_malloc` 由 newlib `malloc` 改为静态 arena（768B，8 字节对齐）；`CDC_Control_FS` 补 `GET/SET_LINE_CODING`
 - [x] 加固④：`platformio.ini` 加 `-fno-common`，让同类别名 bug 变成链接期硬错误
 - [x] 加固⑤：`USB_CDC_Printf` 的共享静态缓冲加临界区保护（原被两个任务并发调用）
-- [x] 编译 SUCCESS：Flash 137704B（26.3%）/ RAM 68212B（52.0%）/ 0 错误 0 警告
-- [ ] **待办：实机烧录复验**（验收标准见下方）
+- [x] **修复⑥（T-008，花屏的真凶）：`USB_CDC_Init()` 从 `main()` 移到 `Task_Agent` 第一行**
+  —— 原位置在 `vTaskStartScheduler()` 之前，而此刻 `BASEPRI` 已被前面的 FreeRTOS 临界区
+  设成 `0x50` 且不会还原（`uxCriticalNesting` 初值 `0xaaaaaaaa`），`SysTick` 被屏蔽。
+  详见 `troubleshooting.md` T-008 与随后的**案例复盘**。
+- [x] 加固⑦：`main()` 里加"开机自检屏"（`LCD_ST7789_Init` 后立刻画红底白字，不经 LVGL）
+  —— 把"花屏"拆成三种可区分情况，一次烧录即可定性
+- [x] 加固⑧：`ui.c` 加常驻 `USB: ok / FAIL code=N` 状态行（1s 刷新），让静默失败的子系统可见
+- [x] 编译 SUCCESS：Flash 138188B（26.4%）/ RAM 68216B（52.0%）/ 0 错误 0 警告
+- [x] **实机验证通过（2026-09-26 用户确认）：花屏消失，界面正常**
+- [ ] **待办：USB 虚拟串口 7 条验收（见下方"最近一次可运行状态"）**
 
 ### Phase 6：LVGL 移植 ✅ 实机验证通过（2026-09-25，ADR-013）
 - [x] 集成：`lib_deps = lvgl/lvgl@8.3.11` + `-DLV_CONF_INCLUDE_SIMPLE` + `src/lv_conf.h`
@@ -96,29 +104,35 @@
 - ✅ **SPI3 10.5MHz 提速** —— 已由 Phase 6 实机验证排除嫌疑（颜色正常）。后续再出花屏**不要**先怀疑这里。
 - 🟡 **训练材料已降级重排**：`training-invpc.md` 原版把"读二进制 / `nm` / `objdump`"当主线，用户明确表示不可执行（打击学习积极性）。2026-09-25 已重构：**核武器类操作改由 AI 代跑，用户只做判断推理**；新增 T0-A 项目结构表 + T0-B 完整调用链表（原 T4 的内容由 AI 直接给出）。
 - 🟡 **`.pio/build/build_stale_*` 目录堆积** —— safe-delete 绕过手段的副作用（`mv` 不算删除），需定期人工清理。
-- 🟡 **`troubleshooting.md` 编号冲突** —— `T-005` 出现两次（"已发生"节讲 PC0 蓝灯、"预期坑预警"节讲 safe-delete 表现④）。同一文档内编号不可复用，待重编号。
+- 🟡 **USB 虚拟串口未逐条验收** —— 花屏已修复、界面正常，但"PC 出现 COM 口 + 命令往来"这 7 条尚未确认
 - 🟡 **workbuddy 记忆随会话演进** —— 同日多会话并行时，`MEMORY.md` 可能成为陈旧副本，以 `progress.md` 为准。
+- 🟡 **`reference-survey.md` 待定稿** —— 另一个会话产出的同类项目调研（9 个项目 + 5 条待决策项），
+  需用户确认：并入 `decision-log.md`（ADR-017）后删除，还是作为常驻参考保留。
 
 ---
 
 ## 下一步计划
 
-1. **Phase 8 实机复验**（用户烧录 + PC 端串口工具测试，验收标准见下）
-2. 通信协议格式定稿（当前是"行式纯文本命令"，需扩展为 JSON 事件通道）
-3. Phase 9 PC Agent（**hooks 触发机制待定**）
-4. Phase 10 MVP 整合
+1. **Phase 8 USB 虚拟串口逐条验收**（插上 Type-C 数据线，按上方 7 条验收）
+2. **补 UART printf 观测通道**（CH340 已到货）—— 这是本轮复盘得出的**最高优先事项**：
+   项目的"观测能力"是当前最大的短板。ADR-008 当年以"无 CH340"为由跳过 UART printf，该前提已消失
+3. 通信协议落地（ADR-016 已定稿：行式类型化文本；`cmd.c` 尚未按新格式改造）
+4. Phase 9 PC Agent（**hooks 触发机制待定**）
+5. Phase 10 MVP 整合
 
 ---
 
 ## 最近一次可运行状态
 
 - 命令：`pio run -t upload`（在 `SmartDeskTerminal_freertos/` 下）
-- 构建：SUCCESS（327 Compiling / 1 Linking，0 error 0 warning），Flash **137704 B（26.3%）** / RAM **68212 B（52.0%）**
+- 构建：SUCCESS（0 error 0 warning），Flash **138188 B（26.4%）** / RAM **68216 B（52.0%）**
 - ⚠️ **烧录前必看**：`pio run` 报 SUCCESS 只代表**退出码**，不代表编译发生。
   必须同时满足 ① 日志有 `Compiling`/`Linking` 行 ② `firmware.bin` 的 mtime 是刚才。
-  若 SUCCESS 但零编译 → 见 `troubleshooting.md` T-005。
+  若 SUCCESS 但零编译 → 见 `troubleshooting.md` **T-009**。
+  若报 `SAFE_DELETE_FAIL_CLOSED` / `WinError 32` → 多半是**调试会话还开着占住了 `firmware.elf`**，
+  先 `Shift+F5` 停止调试。
 - **实机验收标准**（Phase 8，全过才算结账）：
-  1. **烧录后屏上 LVGL 界面正常显示**（无花屏 —— 这是 T-007 修复的第一判据）
+  1. ✅ **烧录后屏上 LVGL 界面正常显示**（无花屏）—— **2026-09-26 用户确认通过**
   2. USB 数据线连核心板 Type-C 口 → PC 设备管理器出现新 COM 口（VID=1234 PID=5678）
      - ⚠️ 必须用**能传数据的线**（部分 Type-C 线只有电源线，无 D+/D-）
   3. PC 串口工具（PuTTY/Arduino 串口监视器）打开 COM 口，波特率任意（CDC 虚拟串口不限速）
@@ -126,5 +140,7 @@
   5. 键入 `hello` → 收到 `Hello SmartDesk!`；`version` → 收到版本+Build；`ping` → 收到 `pong`
   6. 键入 `clear` → 屏上 Hits 计数归零；`hits` → 串口收到 `hits=N`
   7. 按屏上 PRESS ME 按钮 → Hits 增长 → 键入 `hits` 确认数值同步
+  - 另：屏上多了两行状态 —— 开机短暂出现的**红底"LCD self-test OK"**（正常，随后被界面覆盖），
+    以及 UI 里的 **`USB: ok / FAIL code=N`**（USB 状态常驻可见）
 - 代码：`src/main.c` + `src/{lv_conf,lvgl_port,ui,lvgl_tick_source}.{c,h}` + `src/bsp/{key,lcd,touch,usb_cdc}.c|h` + `src/{cmd,agent_msg}.{c,h}` + `lib/usb_device/` + `src/FreeRTOSConfig.h` + `extra_script.py`
-- 对应提交：`bd9a117`（T-007 三缺陷修复 + `-fno-common` 加固 + `lib/usb_device/` 入库）
+- 对应提交：`51811de`（USB 初始化移入任务 + 开机自检屏）

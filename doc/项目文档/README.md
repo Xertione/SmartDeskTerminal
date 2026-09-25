@@ -48,7 +48,7 @@ pio run -t upload    # 烧录到板子（ST-Link）
 | [progress.md](progress.md) | **当前进度（以它为准）** |
 | [plan.md](plan.md) | 10 个 Phase 的目标与产物 |
 | [decision-log.md](decision-log.md) | 为什么这样选而不是那样选（ADR） |
-| [troubleshooting.md](troubleshooting.md) | 已踩的坑（T-NNN） |
+| [troubleshooting.md](troubleshooting.md) | 已踩的坑（T-NNN）+ **T-008 案例复盘：为什么这个 bug 查了这么久**（六条观测通道同时失效 / 差分调试法） |
 | [wiring.md](wiring.md) | **物理接线施工单**（拿着杜邦线照着插） |
 | [debug-manual.md](debug-manual.md) | SWD 调试与自助烧录 |
 | [training-invpc.md](training-invpc.md) | **调试训练任务书**（T0~T11，不含答案；含项目结构总览 + 完整调用链表；一次训练材料，做完可删） |
