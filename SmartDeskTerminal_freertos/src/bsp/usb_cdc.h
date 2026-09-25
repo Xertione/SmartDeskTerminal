@@ -22,13 +22,16 @@
 uint8_t USB_CDC_Init(void);
 
 /* USB 初始化错误码（usb_cdc.c 里的全局 usb_init_err） */
+#define USB_INIT_ERR_NOT_YET     0xFFU  /* 还没初始化（USB_CDC_Init 尚未被调用） */
 #define USB_INIT_ERR_NONE        0U   /* 成功 */
 #define USB_INIT_ERR_USBD_INIT   1U   /* USBD_Init 失败（含底层 PCD 初始化失败） */
 #define USB_INIT_ERR_REG_CLASS   2U   /* USBD_RegisterClass 失败 */
 #define USB_INIT_ERR_START       3U   /* USBD_Start 失败 */
 #define USB_INIT_ERR_PCD         4U   /* HAL_PCD_Init 失败（usbd_conf.c 上报） */
 
-/* 初始化结果（供 UI / 屏显读取；0 = OK） */
+/* 初始化结果（供 UI / 屏显读取）。
+   ⚠️ 初值是 USB_INIT_ERR_NOT_YET —— 因为 USB 初始化在 Task_Agent 里做（调度器启动后），
+      而 UI 在 Task_LVGL 启动时就创建了；不区分"还没做"和"成功了"会让 UI 误报。 */
 extern volatile uint8_t usb_init_err;
 
 /* 底层 PCD 初始化失败标志（定义在 usbd_conf.c） */

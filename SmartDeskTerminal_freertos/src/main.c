@@ -83,6 +83,23 @@ int main(void)
     Key_Init();
     LCD_Init();
     LCD_ST7789_Init();
+
+    /* ── 开机自检屏（诊断用，2026-09-26 加）────────────────────────────
+       目的：把"花屏"这个模糊现象拆成三种可区分的情况，一次烧录就能定性。
+       这里只用**最朴素**的 LCD 调用（不经过 LVGL、不经过任何任务），
+       所以它能否显示，直接等价于"SPI + ST7789 + 面板"这一层是否正常。
+
+       三种结果的含义（看屏 1~2 秒内发生什么）：
+         A. 先红屏白字，随后被 LVGL 界面覆盖  → LCD 正常 **且** LVGL 正常跑起来了
+         B. 红屏白字一直停着（能读出字）      → LCD 正常，但 LVGL/调度器没跑起来
+         C. 始终是花屏/噪点，从没见过红屏      → LCD 初始化这一层就坏了（SPI/面板/接线）
+       情况 B 还顺带证明"屏能显示清晰文字"，从而排除面板与 SPI 时序问题。 */
+    LCD_FillScreen(LCD_RED);
+    LCD_DrawString(8,  10, "LCD self-test OK",          LCD_WHITE, LCD_RED);
+    LCD_DrawString(8,  30, "If this stays: RTOS/LVGL",  LCD_WHITE, LCD_RED);
+    LCD_DrawString(8,  50, "did NOT start.",            LCD_WHITE, LCD_RED);
+    LCD_DrawString(8,  90, "Build " __DATE__ " " __TIME__, LCD_YELLOW, LCD_RED);
+
     Touch_Init();
 
     spi_test_done = 1;                  /* LCD 就绪：错误路径可以画屏了 */
@@ -90,41 +107,28 @@ int main(void)
     /* Agent ↔ UI 队列（队列回归，Phase 8 重启） */
     agent_queue_init();
 
-    /* USB CDC 初始化（在调度器启动前 —— USB 中断自己工作，不需要 RTOS）
-       ⚠️ 必须检查返回值：失败时**不能死循环**，只记录错误让系统继续跑。
-          原因见 usb_cdc.c 的 USB_CDC_Init 注释（此刻 BASEPRI=0x50 已屏蔽 SysTick，
-          在这里死循环会让整个系统静默吊死 → 屏不刷/无 COM 口/无任何提示）。 */
-    uint8_t usb_ok = USB_CDC_Init();
+    /* ⚠️⚠️ USB CDC 初始化**不在 main 里做** —— 移到 Task_Agent 的第一行
+       （2026-09-26 修，理由如下，三条都指向"别在调度器启动前初始化 USB"）：
 
-    /* ── 把 USB 初始化结果**直接画在屏上**（不经过 LVGL）──────────────
-       目的：USB 这条路是"会静默失败"的，必须在屏上留一条不依赖任何
-       后续子系统的证据。LVGL 起来后会覆盖这块区域，但那时说明系统是活的，
-       UI 里还有一份（见 ui.c 的 USB 状态行）。 */
-    {
-        char l[32];
-        int  k = 0;
-        const char *p = "USB: ";
-        for (int m = 0; p[m]; m++) l[k++] = p[m];
-        if (usb_ok == 0)
-        {
-            const char *s = "ok";
-            for (int m = 0; s[m]; m++) l[k++] = s[m];
-        }
-        else
-        {
-            const char *s = "FAIL code=";
-            for (int m = 0; s[m]; m++) l[k++] = s[m];
-            l[k++] = (char)('0' + (usb_ok % 10));
-        }
-        l[k] = 0;
-        LCD_DrawString(8, 310, l, (usb_ok == 0) ? LCD_GREEN : LCD_RED, LCD_BLACK);
-    }
+       ① BASEPRI 已在这个窗口里被卡住。`agent_queue_init()` 的 `xQueueCreate` 内部
+          会调 `taskENTER_CRITICAL()` → 写 `BASEPRI = configMAX_SYSCALL_INTERRUPT_PRIORITY
+          = 0x50`；而 FreeRTOS ARM_CM4F 的 `uxCriticalNesting` 初值是 `0xaaaaaaaa`
+          （`port.c:148`），`vPortExitCritical()` 只在计数回 0 时才 `portENABLE_INTERRUPTS()`，
+          所以退出后 **BASEPRI 仍然是 0x50**，要等 `vPortSVCHandler` 启动第一个任务才被清。
+          后果：**SysTick（优先级 15）被屏蔽 → `uwTick` 冻死 → `HAL_Delay` 永久死等。**
+       ② USB 中断在此刻被使能，而 RTOS 尚未启动：一旦 `HAL_PCD_IRQHandler` 在
+          半初始化状态下被触发，行为不可预期。
+       ③ 可选外设的初始化失败不该拖死主系统 —— 放在任务里，失败只影响 Task_Agent，
+          LVGL 与屏幕照常工作，错误码经 `usb_init_err` 显示在 UI 上。
+
+       详细机制见 `doc/项目文档/troubleshooting.md` 的 T-008。 */
 
     /* 任务架构：
        Task_LVGL(prio 3, 栈 768字)：LVGL 渲染 + lv_timer_handler + 收 Agent 队列
-       Task_Agent(prio 2, 栈 384字)：USB CDC 轮询 + 命令解析 + 发 Agent 队列
+       Task_Agent(prio 2, 栈 384字)：**USB CDC 初始化** + 轮询 + 命令解析 + 发 Agent 队列
        ⚠️ LVGL 非线程安全：所有 LVGL API 只能在 Task_LVGL 里调（包括 Agent 命令
-          要改 UI 的，必须走队列中转，绝不能让 Task_Agent 直接碰控件）。 */
+          要改 UI 的，必须走队列中转，绝不能让 Task_Agent 直接碰控件）。
+          同理 Task_Agent **不要直接调 LCD_xxx 画屏**（会和 Task_LVGL 抢 SPI）。 */
     if (xTaskCreate(Task_LVGL,  "LVGL",  768, NULL, 3, NULL) != pdPASS)
         Error_Handler();
     if (xTaskCreate(Task_Agent, "Agent", 384, NULL, 2, NULL) != pdPASS)
@@ -164,16 +168,20 @@ static void Task_LVGL(void *arg)
 }
 
 /**
-  * @brief  Task_Agent：USB CDC 轮询 + 命令解析
-  * @note   不直接碰 UI —— 改 UI 的命令通过 agent_msg 队列转给 Task_LVGL。
-  *         USB 设备枚举可能慢（PC 端识别 COM 口需 1~2 秒），这里轮询始终跑，
-  *         USB 未就绪时 USB_CDC_Printf 内部静默丢弃，不阻塞。
+  * @brief  Task_Agent：**USB CDC 初始化** + 轮询 + 命令解析
+  * @note   ⚠️ USB 初始化放在这里（而不是 main 里），本地调度器已经启动：
+  *         BASEPRI 已归零、所有中断可用、uxCriticalNesting 已是有效计数。
+  *         失败也不影响 LVGL/屏幕 —— 结果记录在 usb_init_err，由 UI 显示。
+  *         不直接碰 UI —— 改 UI 的命令通过 agent_msg 队列转给 Task_LVGL。
   */
 static void Task_Agent(void *arg)
 {
     (void)arg;
 
-    /* 启动欢迎语（USB 枚举成功后 PC 端会收到） */
+    /* ★ USB CDC 初始化（返回错误码；失败不死循环，只记录） */
+    (void)USB_CDC_Init();
+
+    /* 启动欢迎语（USB 枚举成功后 PC 端会收到；未就绪时内部静默丢弃） */
     USB_CDC_Printf("SmartDesk " FW_VERSION " ready\r\n");
     USB_CDC_Printf("Type 'help' for commands\r\n");
 

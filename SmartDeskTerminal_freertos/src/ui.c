@@ -38,6 +38,7 @@
 static lv_obj_t *label_hits;   /* Hits 计数 */
 static lv_obj_t *label_mem;    /* 两个内存池余量 */
 static lv_obj_t *label_hb;     /* 心跳（1s 跳一次 = lv_timer_handler 在跑） */
+static lv_obj_t *label_usb;    /* USB 初始化状态（1s 刷新，见 info_timer_cb） */
 
 static uint32_t hit_count = 0;
 static uint32_t hb_count  = 0;
@@ -67,6 +68,31 @@ static void info_timer_cb(lv_timer_t *t)
     lv_label_set_text_fmt(label_hb, "HB %lu  Uptime %lus",
                           (unsigned long)hb_count,
                           (unsigned long)(xTaskGetTickCount() / 1000U));
+
+    /* USB 状态（初始化在 Task_Agent 里做，所以必须动态刷） */
+    switch (usb_init_err)
+    {
+    case USB_INIT_ERR_NOT_YET:
+        /* 还没轮到 Task_Agent 初始化（通常只在启动后第 1 秒能看到） */
+        break;
+
+    case USB_INIT_ERR_NONE:
+        lv_label_set_text(label_usb, USB_CDC_IsConfigured()
+                                     ? "USB: ok (COM up)"
+                                     : "USB: ok (waiting PC)");
+        lv_obj_set_style_text_color(label_usb, lv_color_hex(0x00C853), 0);
+        break;
+
+    case USB_INIT_ERR_PCD:
+        lv_label_set_text(label_usb, "USB: FAIL (PCD init)");
+        lv_obj_set_style_text_color(label_usb, lv_color_hex(0xFF1744), 0);
+        break;
+
+    default:
+        lv_label_set_text_fmt(label_usb, "USB: FAIL code=%u", (unsigned)usb_init_err);
+        lv_obj_set_style_text_color(label_usb, lv_color_hex(0xFF1744), 0);
+        break;
+    }
 }
 
 /* ---------------------------- 工具 ---------------------------- */
@@ -103,20 +129,12 @@ void ui_create(void)
     add_label(scr, "SYSCLK: 168 MHz",       0x00E5FF);
     add_label(scr, "Build " __DATE__ " " __TIME__, 0x9E9E9E);
 
-    /* USB 初始化结果 —— 常驻可见。
+    /* USB 初始化结果 —— 常驻可见，由 info_timer_cb 每秒刷新。
        为什么值得占一行：USB 是"会静默失败"的子系统，失败时 PC 侧什么也看不到；
-       把错误码钉在界面上，比反复插拔线猜快得多。0 = OK。 */
-    if (usb_init_err == USB_INIT_ERR_NONE)
-    {
-        add_label(scr, "USB CDC: ok", 0x00C853);
-    }
-    else
-    {
-        add_label(scr, usb_init_err == USB_INIT_ERR_PCD
-                        ? "USB CDC: FAIL (PCD init)"
-                        : "USB CDC: FAIL (see code)",
-                  0xFF1744);
-    }
+       把错误码钉在界面上，比反复插拔线猜快得多。0 = OK。
+       ⚠️ 注意：USB 初始化在 Task_Agent 里做（调度器启动后），而本函数在
+          Task_LVGL 启动时就执行 —— 所以这里只能先占位，真实状态靠定时器刷。 */
+    label_usb = add_label(scr, "USB: init...", 0x9E9E9E);
 
     /* ---- 按钮（点击默认主题自带按下变色反馈，替代旧版手搓闪红）---- */
     lv_obj_t *btn = lv_btn_create(scr);

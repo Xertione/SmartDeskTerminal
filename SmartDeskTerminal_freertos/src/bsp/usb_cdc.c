@@ -27,9 +27,10 @@
 /* USB 设备句柄（usbd_conf.c 通过 USBD_LL_Init 把 hpcd_USB_OTG_FS.pData 装入这里） */
 USBD_HandleTypeDef hUsbDeviceFS;
 
-/* 初始化结果：0 = 成功，非 0 = 见 usb_cdc.h 的 USB_INIT_ERR_*
-   ⚠️ 供 UI 与屏显读取 —— 这个量存在的意义就是"让失败可见"。 */
-volatile uint8_t usb_init_err = USB_INIT_ERR_NONE;
+/* 初始化结果：见 usb_cdc.h 的 USB_INIT_ERR_*
+   ⚠️ 初值是 NOT_YET —— USB 初始化在 Task_Agent 里做，UI 却先创建，
+      不区分"还没做"和"成功了"会让界面误报。 */
+volatile uint8_t usb_init_err = USB_INIT_ERR_NOT_YET;
 
 /* USB 初始化
  *
