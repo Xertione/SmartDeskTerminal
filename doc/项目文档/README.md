@@ -4,9 +4,15 @@
 
 ## 项目状态
 
-**Phase 1/2/5/7 + Phase 3+4 已完成实机验证** —— 三任务 FreeRTOS 调度正常，屏上文字/触摸按钮/计数/心跳齐全。
+**Phase 1/2/5/7 + Phase 3+4 + Phase 6(LVGL) 已完成实机验证** —— LVGL 界面/触摸/FPS/心跳全部正常。
 
-下一个要做的：**Phase 6 LVGL**。详见 [progress.md](progress.md)。
+**Phase 8（USB CDC）代码已写完并修掉 3 个缺陷，待实机复验**（详见 [progress.md](progress.md) 与
+[troubleshooting.md](troubleshooting.md) T-007）。
+
+下一个要做的：**Phase 8 实机复验 → 通信协议落地 → Phase 9 PC Agent**（hooks 触发机制待定）。
+
+> ⚠️ 历史遗留问题（2026-09-25 发现并已修）：`lib/usb_device/` 曾被 `.gitignore` 整目录排除，
+> 导致 USB 中间件从未入库、fresh clone 无法编译。现已入库。**新增 vendor 中间件时务必 git status 核对。**
 
 ## 快速开始
 

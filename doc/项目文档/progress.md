@@ -111,4 +111,4 @@
   6. 键入 `clear` → 屏上 Hits 计数归零；`hits` → 串口收到 `hits=N`
   7. 按屏上 PRESS ME 按钮 → Hits 增长 → 键入 `hits` 确认数值同步
 - 代码：`src/main.c` + `src/{lv_conf,lvgl_port,ui,lvgl_tick_source}.{c,h}` + `src/bsp/{key,lcd,touch,usb_cdc}.c|h` + `src/{cmd,agent_msg}.{c,h}` + `lib/usb_device/` + `src/FreeRTOSConfig.h` + `extra_script.py`
-- 对应提交：`fae3c9b`（T-007 三缺陷修复 + `-fno-common` 加固）
+- 对应提交：`bd9a117`（T-007 三缺陷修复 + `-fno-common` 加固 + `lib/usb_device/` 入库）
